@@ -17,13 +17,9 @@ import (
 func TestWebSocketMessageFlow(t *testing.T) {
 	userA := createTestUser(t)
 	userB := createTestUser(t)
-	sender, receiver := userA, userB
-	if sender.UUID > receiver.UUID {
-		sender, receiver = receiver, sender
-	}
-	openSession(t, sender, receiver)
+	openSession(t, userA, userB)
 
-	connA, responseA, err := websocket.DefaultDialer.Dial(websocketURL(t, sender), nil)
+	connA, responseA, err := websocket.DefaultDialer.Dial(websocketURL(t, userA), nil)
 	if err != nil {
 		t.Fatalf("connect user A: %v", err)
 	}
@@ -32,7 +28,7 @@ func TestWebSocketMessageFlow(t *testing.T) {
 		t.Fatalf("user A websocket status = %d", responseA.StatusCode)
 	}
 
-	connB, responseB, err := websocket.DefaultDialer.Dial(websocketURL(t, receiver), nil)
+	connB, responseB, err := websocket.DefaultDialer.Dial(websocketURL(t, userB), nil)
 	if err != nil {
 		t.Fatalf("connect user B: %v", err)
 	}
@@ -42,32 +38,57 @@ func TestWebSocketMessageFlow(t *testing.T) {
 	}
 
 	if err := connA.WriteJSON(wschatMessage{
-		SendID:    sender.UUID,
-		ReceiveID: receiver.UUID,
-		Content:   "hello from integration test",
+		SendID:    userA.UUID,
+		ReceiveID: userB.UUID,
+		Content:   "hello from A",
 	}); err != nil {
 		t.Fatalf("send websocket message: %v", err)
 	}
 
 	received := waitForMessage(t, connB)
-	if received.SendID != sender.UUID {
-		t.Fatalf("send_id = %s, want %s", received.SendID, sender.UUID)
+	if received.SendID != userA.UUID {
+		t.Fatalf("send_id = %s, want %s", received.SendID, userA.UUID)
 	}
-	if received.ReceiveID != receiver.UUID {
-		t.Fatalf("receive_id = %s, want %s", received.ReceiveID, receiver.UUID)
+	if received.ReceiveID != userB.UUID {
+		t.Fatalf("receive_id = %s, want %s", received.ReceiveID, userB.UUID)
 	}
-	if received.Content != "hello from integration test" {
+	if received.Content != "hello from A" {
 		t.Fatalf("content = %q", received.Content)
+	}
+
+	if err := connB.WriteJSON(wschatMessage{
+		SendID:    userB.UUID,
+		ReceiveID: userA.UUID,
+		Content:   "hello from B",
+	}); err != nil {
+		t.Fatalf("send reverse websocket message: %v", err)
+	}
+
+	reverseReceived := waitForMessage(t, connA)
+	if reverseReceived.SendID != userB.UUID || reverseReceived.ReceiveID != userA.UUID {
+		t.Fatalf("reverse message route = %s -> %s, want %s -> %s",
+			reverseReceived.SendID, reverseReceived.ReceiveID, userB.UUID, userA.UUID)
+	}
+	if reverseReceived.Content != "hello from B" {
+		t.Fatalf("reverse content = %q", reverseReceived.Content)
 	}
 
 	var count int64
 	if err := dao.GormDB.Model(&model.Message{}).
-		Where("send_id = ? AND receive_id = ? AND content = ?", sender.UUID, receiver.UUID, received.Content).
+		Where("send_id = ? AND receive_id = ? AND content IN ?", userA.UUID, userB.UUID, []string{"hello from A", "hello from B"}).
 		Count(&count).Error; err != nil {
 		t.Fatal(err)
 	}
 	if count != 1 {
-		t.Fatalf("persisted message count = %d, want 1", count)
+		t.Fatalf("persisted forward message count = %d, want 1", count)
+	}
+	if err := dao.GormDB.Model(&model.Message{}).
+		Where("send_id = ? AND receive_id = ? AND content = ?", userB.UUID, userA.UUID, "hello from B").
+		Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("persisted reverse message count = %d, want 1", count)
 	}
 
 	// Closing both clients gives the current pump implementation time to unregister them.

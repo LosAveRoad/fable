@@ -47,7 +47,11 @@ func ReadPump(conn *websocket.Conn, userUUID string) {
 		}
 
 		var session model.Session
-		if err := dao.GormDB.Model(&model.Session{}).Where("send_id = ? AND receive_id = ?", userUUID, msg.ReceiveId).First(&session).Error; err != nil {
+		if err := dao.GormDB.Model(&model.Session{}).Where(
+			"(send_id = ? AND receive_id = ?) OR (send_id = ? AND receive_id = ?)",
+			userUUID, msg.ReceiveId,
+			msg.ReceiveId, userUUID,
+		).First(&session).Error; err != nil {
 			return
 		}
 
