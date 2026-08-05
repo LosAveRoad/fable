@@ -1,0 +1,14 @@
+.DS_Store
+
+# 本地配置和敏感信息
+config/config.toml
+ZChat/configs/config.toml
+
+# Go 构建产物
+bin/
+*.test
+
+# 构建产物和日志
+**/kama_chat_backend
+**/logs
+*.log

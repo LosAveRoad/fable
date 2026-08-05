@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MyChat MVP0</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <section id="auth-page" class="card">
+    <h1>MyChat</h1>
+    <form id="auth-form">
+      <input id="nickname" placeholder="昵称（注册时填写）" hidden>
+      <input id="telephone" placeholder="手机号" required>
+      <input id="password" type="password" placeholder="密码" required>
+      <button id="auth-submit">登录</button>
+    </form>
+    <button id="toggle-auth" class="link">没有账号？注册</button>
+    <p id="auth-message" class="message"></p>
+  </section>
+
+  <main id="chat-page" hidden>
+    <aside>
+      <div class="bar"><strong id="my-name">未登录</strong><button id="logout">退出</button></div>
+      <button id="refresh-sessions">刷新会话</button>
+      <div id="sessions"></div>
+      <form id="open-session-form">
+        <input id="target-uuid" placeholder="对方 UUID，如 U001" required>
+        <button>打开单聊</button>
+      </form>
+    </aside>
+
+    <section class="chat">
+      <div class="bar"><strong id="chat-title">请选择会话</strong><span id="connection">未连接</span></div>
+      <div id="messages"></div>
+      <form id="message-form">
+        <input id="message-input" placeholder="输入消息" autocomplete="off" disabled>
+        <button disabled>发送</button>
+      </form>
+      <p id="chat-message" class="message"></p>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
