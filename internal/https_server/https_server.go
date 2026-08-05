@@ -8,6 +8,7 @@ import (
 
 func NewEngine(jwtKey []byte) *gin.Engine {
 	r := gin.Default()
+	r.Static("/chat", "./web/chat-server")
 
 	r.POST("/register", v1.Register)
 	r.POST("/login", v1.Login)
@@ -26,5 +27,11 @@ func NewEngine(jwtKey []byte) *gin.Engine {
 		Auth(jwtKey),
 		v1.GetUserSessionList,
 	)
+	r.POST(
+		"/message/getMessageList",
+		Auth(jwtKey),
+		v1.GetMessageList,
+	)
+	r.GET("/wss", WsAuth(jwtKey), v1.WsController)
 	return r
 }

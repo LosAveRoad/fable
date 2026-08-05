@@ -60,6 +60,7 @@ func Login(c *gin.Context) {
 		default:
 			c.JSON(http.StatusInternalServerError, err)
 		}
+		return
 	}
 
 	c.JSON(http.StatusOK, user)

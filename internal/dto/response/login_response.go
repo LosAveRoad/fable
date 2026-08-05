@@ -1,7 +1,8 @@
 package response
 
 type LoginResponse struct {
-	Nickname string `json:"uuid"`
+	UUID     string `json:"uuid"`
+	Nickname string `json:"-"`
 	Token    string `json:"token"`
 }
 

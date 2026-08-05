@@ -1,26 +1,45 @@
 package v1
 
-// GetMessageList 处理 POST /message/getMessageList。
-//
-// 鉴权：需要 Bearer Token。
-//
-// 请求 JSON：
-//
-//	{
-//	  "user_one_id": "U001",
-//	  "user_two_id": "U002"
-//	}
-//
-// 已认证用户的 uuid 必须属于聊天双方之一。MVP0 只返回文本消息，并按照
-// 创建时间和消息 ID 进行稳定排序；正式使用前应补充分页能力。
-//
-// 成功响应：200 OK。Data 是数组，元素包含 send_id、send_name、
-// send_avatar、receive_id、type、content 和 created_at。
-//
-// 错误响应：400 用户 ID 格式错误；401 未认证；403 请求者不是会话参与者；
-// 500 数据持久化失败。
+import (
+	"mychat/internal/dto/request"
+	"mychat/internal/service/gormservice"
+	"net/http"
 
-type reqJSON struct {
-	user1 string
-	user2 string
+	"github.com/gin-gonic/gin"
+)
+
+func GetMessageList(c *gin.Context) {
+	var req request.GetMessageListRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid message list request"})
+		return
+	}
+
+	value, exists := c.Get("user_uuid")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user uuid not found"})
+		return
+	}
+	userUUID, ok := value.(string)
+	if !ok || userUUID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user uuid"})
+		return
+	}
+
+	if userUUID != req.UserOneID && userUUID != req.UserTwoID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "user is not a participant"})
+		return
+	}
+
+	messages, err := gormservice.GetMessageList(req.UserOneID, req.UserTwoID)
+	if err != nil {
+		if err == gormservice.ErrInvalidUUID {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, messages)
 }
