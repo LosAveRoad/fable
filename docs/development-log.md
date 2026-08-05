@@ -19,6 +19,7 @@
 - 前端使用绝对地址连接 API/WebSocket，静态托管到 Gin 后需要改为同源地址。
 - 发送消息时 WebSocket 尚未连接会被静默忽略，用户看不到任何反馈。
 - 项目缺少 HTTP、WebSocket 集成测试和持续集成流程。
+- 将全局消息 channel 改为按用户保存的 channel 后，`onlineUsers` map 忘记初始化，CI 首次运行 WebSocket 测试时触发 `assignment to entry in nil map`。
 
 ### 本次处理
 
@@ -32,6 +33,7 @@
 - 修复前端登录、会话、历史消息、WebSocket 连接和发送后的本地回显。
 - 增加测试数据库 `mychat_test`，编写 HTTP 和双用户 WebSocket 集成测试。
 - 增加 GitHub Actions CI：启动 MySQL 8.4，执行格式检查、单元测试和集成测试。
+- 初始化在线用户 map，增加 `RegisterUser` 单元测试，并让 WebSocket 集成测试覆盖新的按用户 channel 分发结构。
 
 ### 验证结果
 

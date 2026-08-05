@@ -4,7 +4,6 @@ import (
 	"mychat/internal/dao"
 	"mychat/internal/dto/wschat"
 	"mychat/internal/model"
-	"slices"
 	"sync"
 
 	"github.com/google/uuid"
@@ -12,27 +11,29 @@ import (
 )
 
 var (
-	OnlineUsers []string
+	onlineUsers = make(map[string]*Client)
 	mu          sync.Mutex
 )
 
-var ch = make(chan wschat.Message)
+type Client struct {
+	ch       chan wschat.Message
+	userUUID string
+}
 
-func RegisterUser(uuid string) {
+func RegisterUser(userUUID string) {
+	newClient := Client{
+		ch:       make(chan wschat.Message),
+		userUUID: userUUID,
+	}
 	mu.Lock()
-	OnlineUsers = append(OnlineUsers, uuid)
+	onlineUsers[userUUID] = &newClient
 	mu.Unlock()
 }
 
 func ReadPump(conn *websocket.Conn, userUUID string) {
 	defer func() {
 		mu.Lock()
-		for i, u := range OnlineUsers {
-			if u == userUUID {
-				OnlineUsers = append(OnlineUsers[:i], OnlineUsers[i+1:]...)
-				break
-			}
-		}
+		delete(onlineUsers, userUUID)
 		mu.Unlock()
 		_ = conn.Close()
 	}()
@@ -61,32 +62,19 @@ func ReadPump(conn *websocket.Conn, userUUID string) {
 				ReceiveId: msg.ReceiveId,
 			})
 
-		ch <- msg
+		onlineUsers[msg.ReceiveId].ch <- msg
 	}
 }
 
 func WritePump(conn *websocket.Conn, userUUID string) {
 	defer func() {
 		mu.Lock()
-		for i, u := range OnlineUsers {
-			if u == userUUID {
-				OnlineUsers = append(OnlineUsers[:i], OnlineUsers[i+1:]...)
-				break
-			}
-		}
+		delete(onlineUsers, userUUID)
 		mu.Unlock()
 		_ = conn.Close()
 	}()
-
 	for {
-		msg := <-ch
-
-		if slices.Contains(OnlineUsers, msg.ReceiveId) {
-			if msg.ReceiveId == userUUID {
-				conn.WriteJSON(msg)
-			} else {
-				ch <- msg
-			}
-		}
+		msg := <-onlineUsers[userUUID].ch
+		conn.WriteJSON(msg)
 	}
 }
