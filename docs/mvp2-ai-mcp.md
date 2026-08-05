@@ -122,6 +122,30 @@ KamaChat 没有 AI/MCP 成品，本阶段是你最主要的原创增量。不要
 - 每次工具调用都有可检索的审计记录。
 - 相同 AI 请求重复提交具有幂等或明确的重复处理策略。
 
+## MCP 写操作权限边界
+
+MCP 不提供通用的 `send_message(receive_id, content)` 工具，避免 Agent 可以向任意单一用户发送私聊消息。
+
+允许的写操作：
+
+```text
+send_self_message(content, request_id)
+send_group_message(group_id, content, request_id)
+```
+
+权限规则：
+
+- `send_self_message` 的目标固定为当前认证用户，不允许客户端传入目标用户 UUID。
+- `send_group_message` 只允许发送到当前用户所属的群聊。
+- 群成员校验、禁言校验和发送者身份校验必须由服务端完成。
+- “不需要额外授权”不等于绕过登录、群成员关系或群权限检查。
+- MCP 不允许向其他单一用户发起私聊消息。
+- 发送者身份必须来自 MCP 会话认证上下文，不信任模型或 Tool 参数中的 `send_id`。
+- 写操作必须支持 `request_id` 幂等，避免 Agent 重试造成重复消息。
+- 写入结果必须记录审计信息，但不得记录 token、密钥或不必要的完整私人消息正文。
+
+第一版优先实现 `send_self_message`。群聊模型和成员权限完成后，再实现 `send_group_message`。
+
 ## 11. 面试追问
 
 - MCP 和普通 Function Calling 有什么区别？
