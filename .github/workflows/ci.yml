@@ -47,7 +47,7 @@ jobs:
       - name: Check formatting
         shell: bash
         run: |
-          files=$(gofmt -l internal/integration)
+          files=$(gofmt -l internal/integration internal/service/chatservice)
           if [ -n "$files" ]; then
             echo "These files are not formatted:"
             echo "$files"

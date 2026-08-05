@@ -30,6 +30,7 @@
 - [MVP2：AI 助手与 MCP](docs/mvp2-ai-mcp.md)
 - [MVP3：音视频、Kafka 与 K8s](docs/mvp3-realtime-distributed.md)
 - [KamaChat 参考映射](docs/kamachat-reference.md)
+- [开发问题记录](docs/development-log.md)
 
 ## 当前仓库边界
 

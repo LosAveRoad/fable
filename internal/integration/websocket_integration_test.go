@@ -17,9 +17,13 @@ import (
 func TestWebSocketMessageFlow(t *testing.T) {
 	userA := createTestUser(t)
 	userB := createTestUser(t)
-	openSession(t, userA, userB)
+	sender, receiver := userA, userB
+	if sender.UUID > receiver.UUID {
+		sender, receiver = receiver, sender
+	}
+	openSession(t, sender, receiver)
 
-	connA, responseA, err := websocket.DefaultDialer.Dial(websocketURL(t, userA), nil)
+	connA, responseA, err := websocket.DefaultDialer.Dial(websocketURL(t, sender), nil)
 	if err != nil {
 		t.Fatalf("connect user A: %v", err)
 	}
@@ -28,7 +32,7 @@ func TestWebSocketMessageFlow(t *testing.T) {
 		t.Fatalf("user A websocket status = %d", responseA.StatusCode)
 	}
 
-	connB, responseB, err := websocket.DefaultDialer.Dial(websocketURL(t, userB), nil)
+	connB, responseB, err := websocket.DefaultDialer.Dial(websocketURL(t, receiver), nil)
 	if err != nil {
 		t.Fatalf("connect user B: %v", err)
 	}
@@ -38,19 +42,19 @@ func TestWebSocketMessageFlow(t *testing.T) {
 	}
 
 	if err := connA.WriteJSON(wschatMessage{
-		SendID:    userA.UUID,
-		ReceiveID: userB.UUID,
+		SendID:    sender.UUID,
+		ReceiveID: receiver.UUID,
 		Content:   "hello from integration test",
 	}); err != nil {
 		t.Fatalf("send websocket message: %v", err)
 	}
 
 	received := waitForMessage(t, connB)
-	if received.SendID != userA.UUID {
-		t.Fatalf("send_id = %s, want %s", received.SendID, userA.UUID)
+	if received.SendID != sender.UUID {
+		t.Fatalf("send_id = %s, want %s", received.SendID, sender.UUID)
 	}
-	if received.ReceiveID != userB.UUID {
-		t.Fatalf("receive_id = %s, want %s", received.ReceiveID, userB.UUID)
+	if received.ReceiveID != receiver.UUID {
+		t.Fatalf("receive_id = %s, want %s", received.ReceiveID, receiver.UUID)
 	}
 	if received.Content != "hello from integration test" {
 		t.Fatalf("content = %q", received.Content)
@@ -58,7 +62,7 @@ func TestWebSocketMessageFlow(t *testing.T) {
 
 	var count int64
 	if err := dao.GormDB.Model(&model.Message{}).
-		Where("send_id = ? AND receive_id = ? AND content = ?", userA.UUID, userB.UUID, received.Content).
+		Where("send_id = ? AND receive_id = ? AND content = ?", sender.UUID, receiver.UUID, received.Content).
 		Count(&count).Error; err != nil {
 		t.Fatal(err)
 	}
