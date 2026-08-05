@@ -106,7 +106,7 @@ func Login(r *request.LoginRequest) (*response.LoginResponse, error) {
 	}
 
 	var user model.UserInfo
-	if err := dao.GormDB.First(&user).Error; err != nil {
+	if err := dao.GormDB.Where("telephone = ?", r.Telephone).First(&user).Error; err != nil {
 		return nil, ErrLoginFailed
 	}
 
@@ -123,6 +123,7 @@ func Login(r *request.LoginRequest) (*response.LoginResponse, error) {
 	}
 
 	return &response.LoginResponse{
+		UUID:     user.UUID,
 		Nickname: user.Nickname,
 		Token:    token,
 	}, nil

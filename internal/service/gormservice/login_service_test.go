@@ -100,8 +100,8 @@ func TestLoginInvalidPassword(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT count(*) FROM `user_info` WHERE telephone = ?")).
 		WithArgs("13800138000").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT * FROM `user_info` ORDER BY `user_info`.`id` LIMIT ?")).
-		WithArgs(1).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT * FROM `user_info` WHERE telephone = ? ORDER BY `user_info`.`id` LIMIT ?")).
+		WithArgs("13800138000", 1).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "uuid", "nickname", "telephone", "password_hash", "created_at"}).
 			AddRow(1, "U001", "alice", "13800138000", passwordHash("another-password"), time.Now()))
 
@@ -129,8 +129,8 @@ func TestLoginSuccess(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT count(*) FROM `user_info` WHERE telephone = ?")).
 		WithArgs("13800138000").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT * FROM `user_info` ORDER BY `user_info`.`id` LIMIT ?")).
-		WithArgs(1).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT * FROM `user_info` WHERE telephone = ? ORDER BY `user_info`.`id` LIMIT ?")).
+		WithArgs("13800138000", 1).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "uuid", "nickname", "telephone", "password_hash", "created_at"}).
 			AddRow(1, "U001", "alice", "13800138000", passwordHash("password123"), time.Now()))
 
@@ -142,8 +142,8 @@ func TestLoginSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Login() error = %v", err)
 	}
-	if result == nil || result.Nickname != "alice" || result.Token == "" {
-		t.Fatalf("result = %+v, want nickname and token", result)
+	if result == nil || result.UUID != "U001" || result.Nickname != "alice" || result.Token == "" {
+		t.Fatalf("result = %+v, want uuid, nickname and token", result)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

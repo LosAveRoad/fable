@@ -13,7 +13,9 @@ func main() {
 		panic(err)
 	}
 	gormservice.InitJWT(cfg.JWTConfig)
-	dao.InitGorm(cfg.MySQLConfig)
+	if err := dao.InitGorm(cfg.MySQLConfig); err != nil {
+		panic(err)
+	}
 	defer dao.CloseGorm()
 
 	r := https_server.NewEngine(cfg.JWTConfig.Secret)

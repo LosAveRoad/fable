@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"mychat/internal/config"
+	"mychat/internal/model"
 
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -46,6 +47,15 @@ func InitGorm(mysqlConfig config.MySQLConfig) error {
 	if err := sqlDB.Ping(); err != nil {
 		_ = sqlDB.Close()
 		return fmt.Errorf("ping mysql: %w", err)
+	}
+
+	if err := db.AutoMigrate(
+		&model.UserInfo{},
+		&model.Session{},
+		&model.Message{},
+	); err != nil {
+		_ = sqlDB.Close()
+		return fmt.Errorf("auto migrate mysql tables: %w", err)
 	}
 
 	GormDB = db
