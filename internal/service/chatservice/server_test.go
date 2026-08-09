@@ -39,7 +39,7 @@ func waitForClosedClient(t *testing.T, client *Client) {
 func TestNewServerInitializesState(t *testing.T) {
 	server := NewServer(4)
 
-	if server.clients == nil || server.register == nil || server.unregister == nil || server.inbound == nil || server.stopped == nil {
+	if server.clients == nil || server.register == nil || server.unregister == nil || server.routeQueue == nil || server.stopped == nil {
 		t.Fatal("NewServer did not initialize state and channels")
 	}
 }
@@ -100,7 +100,7 @@ func TestSlowClientDoesNotBlockServer(t *testing.T) {
 	waitForOnlineCount(t, server, 1)
 }
 
-func TestServerRoutesSubmittedMessage(t *testing.T) {
+func TestServerRoutesMessageToExplicitUser(t *testing.T) {
 	server := startTestServer(t)
 	receiver := NewClient(server, nil, "U-receiver", 1)
 	if !server.Register(receiver) {
@@ -109,8 +109,8 @@ func TestServerRoutesSubmittedMessage(t *testing.T) {
 	waitForOnlineCount(t, server, 1)
 
 	message := wschat.Message{SendID: "U-sender", ReceiveID: "U-receiver", Content: "hello"}
-	if !server.submit(message) {
-		t.Fatal("submit returned false")
+	if !server.RouteTo("U-receiver", message) {
+		t.Fatal("RouteTo returned false")
 	}
 
 	select {
@@ -120,6 +120,13 @@ func TestServerRoutesSubmittedMessage(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("submitted message was not routed")
+	}
+}
+
+func TestServerRouteToRejectsMissingTarget(t *testing.T) {
+	server := startTestServer(t)
+	if server.RouteTo("", wschat.Message{Content: "hello"}) {
+		t.Fatal("RouteTo accepted an empty target")
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 	"mychat/internal/mcpserver/contract"
 	"mychat/internal/model"
 
+	"github.com/gorilla/websocket"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -148,5 +149,112 @@ func TestMCPReadOnlyToolsRespectAISessionAccess(t *testing.T) {
 	}
 	if !denied.IsError {
 		t.Fatalf("get_recent_messages succeeded after revocation: %+v", denied)
+	}
+}
+
+func TestMCPSendMessageRequiresSessionAccessAndSyncsBothUsers(t *testing.T) {
+	waitForOnlineConnections(t, 0)
+	userA := createTestUser(t)
+	userB := createTestUser(t)
+	openSession(t, userA, userB)
+
+	var setting response.AISettingResponse
+	resp := requestJSON(t, http.MethodGet, "/api/v1/ai/setting", nil, userA.Token, &setting)
+	if resp.StatusCode != http.StatusOK || len(setting.Sessions) != 1 {
+		t.Fatalf("get setting status=%d setting=%+v", resp.StatusCode, setting)
+	}
+	sessionUUID := setting.Sessions[0].SessionUUID
+
+	client := connectMCPClient(t, userA.Token)
+	ctx := context.Background()
+	denied, err := client.CallTool(ctx, &mcp.CallToolParams{Name: "send_message", Arguments: map[string]any{
+		"session_uuid": sessionUUID,
+		"content":      "AI-assisted hello",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !denied.IsError {
+		t.Fatalf("send_message succeeded before authorization: %+v", denied)
+	}
+
+	var count int64
+	if err := dao.GormDB.Model(&model.Message{}).
+		Where("session_id = ? AND content = ?", sessionUUID, "AI-assisted hello").
+		Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("messages before authorization = %d, want 0", count)
+	}
+
+	resp = requestJSON(t, http.MethodPut, "/api/v1/ai/setting", map[string]any{
+		"allowed_session_uuids": []string{sessionUUID},
+	}, userA.Token, &setting)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("authorize status = %d", resp.StatusCode)
+	}
+
+	connA, _, err := websocket.DefaultDialer.Dial(websocketURL(t, userA), nil)
+	if err != nil {
+		t.Fatalf("connect user A: %v", err)
+	}
+	defer connA.Close()
+	connB, _, err := websocket.DefaultDialer.Dial(websocketURL(t, userB), nil)
+	if err != nil {
+		t.Fatalf("connect user B: %v", err)
+	}
+	defer connB.Close()
+	waitForOnlineConnections(t, 2)
+
+	result, err := client.CallTool(ctx, &mcp.CallToolParams{Name: "send_message", Arguments: map[string]any{
+		"session_uuid": sessionUUID,
+		"content":      "AI-assisted hello",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError {
+		t.Fatalf("send_message returned tool error: %+v", result)
+	}
+	output := decodeStructuredOutput[contract.SendMessageOutput](t, result)
+	if output.Message.SessionUUID != sessionUUID || output.Message.Content != "AI-assisted hello" || output.Message.Origin != model.MessageOriginAI {
+		t.Fatalf("send output = %+v", output)
+	}
+
+	for name, connection := range map[string]*websocket.Conn{"sender": connA, "receiver": connB} {
+		received := waitForMessage(t, connection)
+		if received.SendID != userA.UUID || received.ReceiveID != userB.UUID || received.Content != "AI-assisted hello" || received.Origin != model.MessageOriginAI {
+			t.Fatalf("%s received = %+v", name, received)
+		}
+	}
+
+	var persisted model.Message
+	if err := dao.GormDB.Where("uuid = ?", output.Message.MessageUUID).First(&persisted).Error; err != nil {
+		t.Fatal(err)
+	}
+	if persisted.SessionId != sessionUUID || persisted.SendId != userA.UUID || persisted.ReceiveId != userB.UUID || persisted.Origin != model.MessageOriginAI {
+		t.Fatalf("persisted message = %+v", persisted)
+	}
+
+	_ = connA.Close()
+	_ = connB.Close()
+	waitForOnlineConnections(t, 0)
+
+	offline, err := client.CallTool(ctx, &mcp.CallToolParams{Name: "send_message", Arguments: map[string]any{
+		"session_uuid": sessionUUID,
+		"content":      "persist while offline",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if offline.IsError {
+		t.Fatalf("offline send returned tool error: %+v", offline)
+	}
+	offlineOutput := decodeStructuredOutput[contract.SendMessageOutput](t, offline)
+	persisted = model.Message{}
+	if err := dao.GormDB.Where("uuid = ? AND origin = ?", offlineOutput.Message.MessageUUID, model.MessageOriginAI).
+		First(&persisted).Error; err != nil {
+		t.Fatal(err)
 	}
 }

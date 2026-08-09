@@ -6,6 +6,7 @@ import (
 
 	"mychat/internal/dao"
 	"mychat/internal/model"
+	"mychat/internal/service/gormservice"
 
 	"gorm.io/gorm"
 )
@@ -16,21 +17,72 @@ const (
 	DefaultSearchMessageLimit = 30
 	MaxSearchMessageLimit     = 50
 	MaxSearchQueryLength      = 200
+	MaxAIMessageContentLength = 4000
 )
 
 type AIMessage struct {
-	UUID        string
-	SessionUUID string
-	SenderUUID  string
-	SenderName  string
-	Type        int8
-	Content     string
-	CreatedAt   time.Time
+	UUID         string
+	SessionUUID  string
+	SenderUUID   string
+	SenderName   string
+	ReceiverUUID string
+	Type         int8
+	Content      string
+	Origin       int8
+	CreatedAt    time.Time
 }
 
 type MessagePage struct {
 	Messages []AIMessage
 	HasMore  bool
+}
+
+func SendMessage(userUUID, sessionUUID, content string) (AIMessage, error) {
+	userUUID = strings.TrimSpace(userUUID)
+	sessionUUID = strings.TrimSpace(sessionUUID)
+	content = strings.TrimSpace(content)
+	if userUUID == "" || sessionUUID == "" || content == "" || len([]rune(content)) > MaxAIMessageContentLength {
+		return AIMessage{}, ErrInvalidToolInput
+	}
+
+	var session model.Session
+	err := dao.GormDB.Model(&model.Session{}).
+		Joins("JOIN user_ai_session_access AS access ON access.session_uuid = session.uuid AND access.user_uuid = ?", userUUID).
+		Where("session.uuid = ? AND (session.send_id = ? OR session.receive_id = ?)", sessionUUID, userUUID, userUUID).
+		First(&session).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return AIMessage{}, ErrForbidden
+		}
+		return AIMessage{}, ErrDatabase
+	}
+
+	peerUUID := session.SendId
+	if peerUUID == userUUID {
+		peerUUID = session.ReceiveId
+	}
+
+	var sender model.UserInfo
+	if err := dao.GormDB.Select("uuid", "nickname").Where("uuid = ?", userUUID).First(&sender).Error; err != nil {
+		return AIMessage{}, ErrDatabase
+	}
+
+	created, err := gormservice.SendAIMessage(userUUID, peerUUID, content)
+	if err != nil {
+		return AIMessage{}, ErrDatabase
+	}
+
+	return AIMessage{
+		UUID:         created.UUID,
+		SessionUUID:  created.SessionID,
+		SenderUUID:   created.SendID,
+		SenderName:   sender.Nickname,
+		ReceiverUUID: created.ReceiveID,
+		Type:         created.Type,
+		Content:      created.Content,
+		Origin:       created.Origin,
+		CreatedAt:    created.CreatedAt,
+	}, nil
 }
 
 func GetRecentMessages(userUUID, sessionUUID, beforeMessageUUID string, limit int) (MessagePage, error) {
@@ -130,13 +182,15 @@ func mapMessages(messages []model.Message) ([]AIMessage, error) {
 
 	for _, message := range messages {
 		result = append(result, AIMessage{
-			UUID:        message.UUID,
-			SessionUUID: message.SessionId,
-			SenderUUID:  message.SendId,
-			SenderName:  names[message.SendId],
-			Type:        message.Type,
-			Content:     message.Content,
-			CreatedAt:   message.CreatedAt,
+			UUID:         message.UUID,
+			SessionUUID:  message.SessionId,
+			SenderUUID:   message.SendId,
+			SenderName:   names[message.SendId],
+			ReceiverUUID: message.ReceiveId,
+			Type:         message.Type,
+			Content:      message.Content,
+			Origin:       message.Origin,
+			CreatedAt:    message.CreatedAt,
 		})
 	}
 	return result, nil

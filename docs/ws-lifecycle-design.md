@@ -24,7 +24,7 @@ Controller
 
 Client.read
 → gormservice.SendMessage
-→ Server.inbound
+→ Server.RouteTo(receiver)
 → Server.deliver
 → Client.outbound
 → Client.write
@@ -50,7 +50,7 @@ Server 是本进程在线连接的唯一管理者。
 
 ~~~text
 入站：
-WebSocket → Client.read → gormservice.SendMessage → Server.inbound
+WebSocket → Client.read → gormservice.SendMessage → Server.RouteTo(receiver)
 
 出站：
 Server.deliver → Client.outbound → Client.write → WebSocket
@@ -194,7 +194,7 @@ type Server struct {
     clients map[string]*Client
     online  atomic.Int64
 
-    inbound    chan wschat.Message
+    routeQueue chan routeRequest
     register   chan *Client
     unregister chan *Client
     done       chan struct{}
@@ -209,7 +209,7 @@ func (s *Server) OnlineCount() int
 func (s *Server) Close()
 
 func (s *Server) unregisterClient(client *Client)
-func (s *Server) submit(message wschat.Message) bool
+func (s *Server) RouteTo(userUUID string, message wschat.Message) bool
 func (s *Server) removeClient(client *Client)
 func (s *Server) deliver(client *Client, message wschat.Message) bool
 ~~~
@@ -278,8 +278,7 @@ Client.read
 → 验证 message.SendID == client.userUUID
 → gormservice.SendMessage
 → MySQL
-→ server.submit
-→ Server.inbound
+→ server.RouteTo(created.ReceiveID, message)
 ~~~
 
 Sender 必须与 Token 用户一致。
@@ -287,7 +286,7 @@ Sender 必须与 Token 用户一致。
 ### 5.5 落库和在线转发
 
 ~~~text
-Server.inbound
+Server.routeQueue
 → Server.deliver(receiver)
 ~~~
 
@@ -335,7 +334,7 @@ SIGINT/SIGTERM
 |---|---|
 | register | 注册 WebSocket Client，不表示用户登录 |
 | unregister | 注销 WebSocket Client，不表示用户登出 |
-| inbound | 从 WebSocket Client 进入 Server 的消息 |
+| routeQueue | 已持久化、等待 Server 按目标用户路由的消息 |
 | outbound | 从 Server 发往某个 WebSocket Client 的消息 |
 | OnlineCount | 当前实例在线 Client 数量 |
 | DefaultQueueSize | 队列默认容量 |
@@ -359,7 +358,7 @@ SIGINT/SIGTERM
 | Server.Clients | 私有 Server.clients |
 | Server.Login | 私有 Server.register |
 | Server.Logout | 私有 Server.unregister |
-| Server.Transmit | 私有 Server.inbound |
+| Server.Transmit | 私有 Server.routeQueue |
 | Client.SendBack | 私有 Client.outbound |
 | Client.SendTo | 删除 |
 | Client.Read | 私有 Client.read |
@@ -377,37 +376,26 @@ ZChat 使用 GPLv3。Fable 只参考职责和流程，自行实现代码，不�
 
 ## 8. MCP 边界
 
-MCP 不走 WebSocket，也不进入 Server.inbound。
+MCP 请求不走 WebSocket；`send_message` 持久化成功后，与 WebSocket 共用本机 `Server.RouteTo` 实时投递入口。
 
 ~~~text
 WebSocket：
-Client.read → gormservice.SendMessage → Server.inbound
+Client.read → gormservice.SendMessage → Server.RouteTo(receiver)
 
 MCP：
-MCP HTTP → Tool → aiservice 权限检查 → gormservice.SendMessage
+MCP HTTP → send_message → aiservice Session 权限检查 → gormservice.SendAIMessage
+→ Server.RouteTo(receiver) + Server.RouteTo(sender)
 ~~~
+
+`send_message` 只接收 `session_uuid` 和正文。Sender 来自 MCP Token，Receiver 由授权 Session 推导；AI 不能输入任意用户 UUID。消息使用 `OriginAI` 留下审计标记，发送者自己的 IM 页面也会收到实时回推。Receiver 离线时实时路由可以失败，但已经持久化的 Tool 调用仍然成功。
 
 如果 MCP 消息落库后需要通知在线 Receiver，可以调用单独的实时投递入口。这是使用 WebSocket 通知结果，不表示 MCP 请求通过 WebSocket。
 
-## 9. Redis 扩展边界
+## 9. 单实例边界
 
-本地连接继续由 Server.clients 和 Client.outbound 管理。
+当前版本明确不引入 Redis。`Server.clients` 只管理本进程 WebSocket，`RouteTo` 只执行本机实时投递；Receiver 不在线时，已经写入 MySQL 的消息仍然保留，用户下次读取会话时可以看到。
 
-Redis 未来负责：
-
-- userUUID 到 serverID 的在线路由；
-- Presence TTL；
-- 跨实例 Pub/Sub。
-
-~~~text
-消息落库
-→ Redis 查询 Receiver 所在 serverID
-→ Pub/Sub 通知目标 Server
-→ 目标 Server.deliver
-→ Client.outbound
-~~~
-
-Redis 不保存 websocket.Conn，也不替代 Client.outbound。
+这是一项主动的产品和范围选择：当前目标是完成 Codex、MCP、Session 授权、持久化和单实例实时推送闭环，不提前实现跨实例 Presence 或 Pub/Sub。
 
 ## 10. 测试要求
 
@@ -438,6 +426,10 @@ Message Service 单元测试：
 - 缺少 Token 无法 Upgrade；
 - 连接关闭后 OnlineCount 恢复；
 - 测试 URL 不携带 client_id。
+- MCP 未授权 Session 不能发送；
+- MCP 授权发送写入 OriginAI；
+- MCP 代发同时回推 Sender 和 Receiver；
+- 双方离线时 MCP 消息仍然成功落库。
 
 ## 11. 完成标准
 
@@ -446,12 +438,12 @@ Message Service 单元测试：
 - Client 显式绑定所属 Server；
 - Server 状态字段不导出；
 - 连接事件使用 register/unregister；
-- 消息方向使用 inbound/outbound；
+- 消息路由使用 routeQueue，单连接写队列使用 outbound；
 - 旧连接不能删除新连接；
 - 慢客户端不能阻塞中心事件循环；
 - 身份只来自 Token；
 - 消息错误语义准确；
 - 没有消息类型魔法值；
-- MCP、WebSocket 和 Redis 边界清晰；
+- MCP、WebSocket 和单实例实时路由边界清晰；
 - 进程退出会关闭 HTTP、WebSocket 和数据库资源；
 - 单元测试、静态检查和可用的联合测试通过。

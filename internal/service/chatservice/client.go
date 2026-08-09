@@ -63,10 +63,11 @@ func (c *Client) read() {
 			continue
 		}
 
-		if !c.server.submit(wschat.Message{
+		if !c.server.RouteTo(created.ReceiveID, wschat.Message{
 			SendID:    created.SendID,
 			ReceiveID: created.ReceiveID,
 			Content:   created.Content,
+			Origin:    created.Origin,
 		}) {
 			return
 		}

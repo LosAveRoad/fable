@@ -10,6 +10,7 @@ const (
 	ListSessionsName      = "list_sessions"
 	GetRecentMessagesName = "get_recent_messages"
 	SearchMessagesName    = "search_messages"
+	SendMessageName       = "send_message"
 )
 
 func Register(server *mcp.Server) {
@@ -36,6 +37,17 @@ func Register(server *mcp.Server) {
 		Description: prompts.SearchMessagesDescription,
 		Annotations: annotations,
 	}, SearchMessages)
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        SendMessageName,
+		Title:       "Send an authorized session message",
+		Description: prompts.SendMessageDescription,
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:    false,
+			DestructiveHint: boolPointer(false),
+			IdempotentHint:  false,
+			OpenWorldHint:   boolPointer(false),
+		},
+	}, SendMessage)
 }
 
 func boolPointer(value bool) *bool {

@@ -41,6 +41,7 @@ func mapMessage(message aiservice.AIMessage) contract.Message {
 		},
 		Type:      message.Type,
 		Content:   message.Content,
+		Origin:    message.Origin,
 		CreatedAt: message.CreatedAt.Format(time.RFC3339Nano),
 	}
 }

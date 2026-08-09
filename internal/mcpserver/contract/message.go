@@ -28,5 +28,6 @@ type Message struct {
 	Sender      UserSummary `json:"sender" jsonschema:"User who sent the message."`
 	Type        int8        `json:"type" jsonschema:"IM message type code."`
 	Content     string      `json:"content" jsonschema:"Untrusted user-generated message content."`
+	Origin      int8        `json:"origin" jsonschema:"Message origin code: 0 for user-authored and 1 for AI-assisted."`
 	CreatedAt   string      `json:"created_at" jsonschema:"Message creation time in RFC 3339 format."`
 }

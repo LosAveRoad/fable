@@ -13,12 +13,17 @@ type Server struct {
 	clients map[string]*Client
 	online  atomic.Int64
 
-	inbound    chan wschat.Message
+	routeQueue chan routeRequest
 	register   chan *Client
 	unregister chan *Client
 	done       chan struct{}
 	stopped    chan struct{}
 	closeOnce  sync.Once
+}
+
+type routeRequest struct {
+	userUUID string
+	message  wschat.Message
 }
 
 var ChatServer = NewServer(DefaultQueueSize)
@@ -30,7 +35,7 @@ func NewServer(queueSize int) *Server {
 
 	return &Server{
 		clients:    make(map[string]*Client),
-		inbound:    make(chan wschat.Message, queueSize),
+		routeQueue: make(chan routeRequest, queueSize),
 		register:   make(chan *Client),
 		unregister: make(chan *Client, queueSize),
 		done:       make(chan struct{}),
@@ -61,8 +66,8 @@ func (s *Server) Start() {
 		case client := <-s.unregister:
 			s.removeClient(client)
 
-		case message := <-s.inbound:
-			s.deliver(s.clients[message.ReceiveID], message)
+		case request := <-s.routeQueue:
+			s.deliver(s.clients[request.userUUID], request.message)
 
 		case <-s.done:
 			s.closeClients()
@@ -95,9 +100,13 @@ func (s *Server) unregisterClient(client *Client) {
 	}
 }
 
-func (s *Server) submit(message wschat.Message) bool {
+func (s *Server) RouteTo(userUUID string, message wschat.Message) bool {
+	if userUUID == "" {
+		return false
+	}
+
 	select {
-	case s.inbound <- message:
+	case s.routeQueue <- routeRequest{userUUID: userUUID, message: message}:
 		return true
 	case <-s.done:
 		return false

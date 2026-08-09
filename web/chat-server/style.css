@@ -17,6 +17,7 @@ aside { padding: 12px; border-right: 1px solid #ddd; }
 #messages { padding: 16px; overflow: auto; }
 .msg { margin: 8px 0; padding: 8px 10px; width: fit-content; max-width: 70%; background: #eee; border-radius: 6px; }
 .msg.mine { margin-left: auto; background: #bfdbfe; }
+.ai-origin { display: block; margin-top: 4px; font-size: 11px; opacity: 0.7; }
 #message-form { grid-template-columns: 1fr auto; padding: 10px; border-top: 1px solid #ddd; }
 #message-form button { width: 60px; }
 #chat-message { margin: 0 10px; }

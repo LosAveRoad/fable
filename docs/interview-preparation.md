@@ -207,11 +207,11 @@ server.Deliver(message)
 
 ---
 
-## 5. `inbound` channel 是什么，为什么叫这个名字
+## 5. `routeQueue` channel 是什么，为什么这样命名
 
 ### 30 秒回答
 
-`inbound` 表示相对于 ChatServer 而言进入 Server 的消息。Client 从 WebSocket 读出消息后写入该 channel，Server 再查询接收方并投递到接收方 Client 的 `outbound`。这个名字方向上正确，但职责不够明确；`routeQueue` 更能说明它是等待 Server 路由的消息队列。
+`routeQueue` 保存已经成功持久化、等待 ChatServer 按明确用户 UUID 实时路由的消息。它不负责数据库可靠性，也不是原始 WebSocket 输入；这个名字直接说明队列的用途，避免 `inbound` 的参照物歧义。
 
 ### 消息路径
 
@@ -227,7 +227,7 @@ Server routeQueue
 
 两个队列的边界不同：
 
-- `Server.routeQueue`：多个 Client 提交给 Server、等待路由的消息。
+- `Server.routeQueue`：WebSocket Client 或 MCP Tool 提交给 Server、等待按目标用户路由的请求。
 - `Client.outbound`：已经分配给某个 Client、等待写入 WebSocket 的消息。
 
 ### 命名选择
@@ -235,7 +235,7 @@ Server routeQueue
 ```go
 inbound    chan wschat.Message // 方向正确，但依赖阅读者先确定参照物
 messages   chan wschat.Message // 简单，但职责仍然宽泛
-routeQueue chan wschat.Message // 最直接地表达用途
+routeQueue chan routeRequest // 同时携带目标 userUUID 和已持久化消息
 ```
 
 ### 避免误答
@@ -385,7 +385,7 @@ WebSocket Handler ─┐
 MCP Tool Handler ──┘
 ```
 
-如果 MCP 最终实现发送消息，它可以调用同一业务 Service 完成鉴权和持久化；在线推送再交给 ChatServer 或后续 Redis 路由。这样 AI 功能与 IM 传输层保持解耦。
+MCP `send_message` 调用 AI Service 完成 Session 授权，再复用普通消息 Service 持久化；成功后调用 ChatServer 的本机 `RouteTo`，同时通知发送方和接收方。MCP 不伪装成 WebSocket Client，AI 权限和实时传输保持解耦。
 
 ### 避免误答
 
@@ -394,13 +394,35 @@ MCP Tool Handler ──┘
 
 ---
 
+## 10. 为什么 AI 没有 UUID，也不创建特殊 AI Session
+
+### 30 秒回答
+
+当前产品把 Codex 定义为用户授权的外部代理，而不是 IM 内的系统联系人。AI 只能在 `UserAISetting` 明确授权的 Session 中代表 Token 用户操作；`send_message` 不接受 Sender 或 Receiver UUID，而是从授权 Session 推导对端。消息通过 `OriginAI` 审计，并同时回推原 Session 的双方，因此用户能在正确聊天上下文中看到代发结果。
+
+### 产品取舍
+
+特殊 AI Session 只有在 Fable 自己拥有长期 Agent Runtime、自动唤醒和消息消费能力时才是真正闭环。当前智能体运行在 Codex 中，再增加一个 Fable AI 联系人会制造第二个对话入口，却没有后台 Bot 消费用户发给它的消息。因此 MVP 保持 MCP-native IM 定位，不创建伪 AI 会话。
+
+### 权限与路由的区别
+
+```text
+授权资源：session_uuid
+    ↓ 服务端确认成员关系和 UserAISetting
+实时地址：从 Session 推导出的 userUUID
+```
+
+使用 userUUID 查找本机 Client 只是实时路由，不表示 AI 获得了面向任意用户的权限。
+
+---
+
 ## 一分钟项目设计总结
 
 > Fable Chat 的 HTTP 层使用标准库 `ServeMux` 统一挂载 Gin 和 MCP，并显式持有 `http.Server` 完成信号驱动的优雅关闭。WebSocket 部分将每个连接封装为 Client，由独立 read/write goroutine 负责网络 I/O，ChatServer 负责在线连接生命周期和消息路由。
 >
-> 在线连接表最初采用共享 map 加 `RWMutex`，随后演进为单一所有者事件循环：Client 只提交注册、注销和路由事件，由 Server 串行修改连接表；在线人数使用原子计数，关闭清理由事件循环完成。消息持久化由 `Client.read` 调用共享消息 Service 完成，成功后才进入 Server 路由队列，避免数据库 I/O 阻塞整个连接事件循环。这次演进的核心不是宣称 channel 比 mutex 更快，而是明确状态所有权、统一连接生命周期顺序；规模增长后可以按 UUID 分片，并通过 Redis 支持跨实例路由。
+> 在线连接表最初采用共享 map 加 `RWMutex`，随后演进为单一所有者事件循环：Client 只提交注册、注销和路由事件，由 Server 串行修改连接表；在线人数使用原子计数，关闭清理由事件循环完成。消息持久化由 `Client.read` 调用共享消息 Service 完成，成功后才进入 Server 路由队列，避免数据库 I/O 阻塞整个连接事件循环。当前版本主动保持单实例，不引入 Redis。
 >
-> MCP 与 WebSocket 保持传输层解耦，只复用认证、会话授权和消息业务 Service，避免 AI 功能侵入 IM 连接生命周期。
+> MCP 与 WebSocket 保持传输层解耦，只复用认证、Session 授权和消息业务 Service。`send_message` 只能操作用户显式授权的 Session，消息通过 `OriginAI` 审计并回推双方；AI 是用户代理而不是 IM 系统用户。
 
 ## 后续补充规则
 

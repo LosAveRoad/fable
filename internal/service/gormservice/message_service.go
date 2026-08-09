@@ -12,6 +12,14 @@ import (
 )
 
 func SendMessage(senderUUID string, receiverUUID string, content string) (response.MessageResponse, error) {
+	return sendMessage(senderUUID, receiverUUID, content, model.MessageOriginUser)
+}
+
+func SendAIMessage(senderUUID string, receiverUUID string, content string) (response.MessageResponse, error) {
+	return sendMessage(senderUUID, receiverUUID, content, model.MessageOriginAI)
+}
+
+func sendMessage(senderUUID string, receiverUUID string, content string, origin int8) (response.MessageResponse, error) {
 	if senderUUID == "" || receiverUUID == "" || senderUUID == receiverUUID {
 		return response.MessageResponse{}, ErrInvalidUserPair
 	}
@@ -36,6 +44,7 @@ func SendMessage(senderUUID string, receiverUUID string, content string) (respon
 		SessionId: session.UUID,
 		Type:      model.MessageTypeText,
 		Content:   content,
+		Origin:    origin,
 		SendId:    senderUUID,
 		ReceiveId: receiverUUID,
 	}
@@ -48,6 +57,7 @@ func SendMessage(senderUUID string, receiverUUID string, content string) (respon
 		SessionID: message.SessionId,
 		Type:      message.Type,
 		Content:   message.Content,
+		Origin:    message.Origin,
 		SendID:    message.SendId,
 		ReceiveID: message.ReceiveId,
 		CreatedAt: message.CreatedAt,
@@ -74,6 +84,7 @@ func GetMessageList(userOneID string, userTwoID string) ([]response.MessageRespo
 			SessionID: message.SessionId,
 			Type:      message.Type,
 			Content:   message.Content,
+			Origin:    message.Origin,
 			SendID:    message.SendId,
 			ReceiveID: message.ReceiveId,
 			CreatedAt: message.CreatedAt,
