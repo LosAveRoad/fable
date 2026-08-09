@@ -1,9 +1,11 @@
 package chatservice
 
 import (
+	"log"
 	"sync"
 
 	"mychat/internal/dto/wschat"
+	"mychat/internal/service/gormservice"
 
 	"github.com/gorilla/websocket"
 )
@@ -55,7 +57,17 @@ func (c *Client) read() {
 			return
 		}
 
-		if !c.server.submit(message) {
+		created, err := gormservice.SendMessage(c.userUUID, message.ReceiveID, message.Content)
+		if err != nil {
+			log.Printf("persist websocket message: %v", err)
+			continue
+		}
+
+		if !c.server.submit(wschat.Message{
+			SendID:    created.SendID,
+			ReceiveID: created.ReceiveID,
+			Content:   created.Content,
+		}) {
 			return
 		}
 	}

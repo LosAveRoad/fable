@@ -20,7 +20,7 @@
 
 Server 生命周期固定为 `NewServer → go Start → Close`。`Start` 只允许调用一次，因此不使用 `startOnce` 掩盖重复启动；未启动就关闭、关闭后重新启动都属于调用方错误。
 
-目前仍有一个后续优化点：`gormservice.SendMessage` 还在主事件循环中执行，数据库延迟会阻塞后续注册、注销和消息路由。因此可以说明连接表已经采用单一所有者模型，但暂时不能声称事件循环内只有 O(1) 的内存操作。
+`Client.read` 在自己的读取 goroutine 中调用 `gormservice.SendMessage`，持久化成功后才把规范化消息提交给 Server。数据库延迟只会对当前发送方形成背压，不会阻塞全局注册、注销和路由事件循环。
 
 ---
 
@@ -203,7 +203,7 @@ server.Deliver(message)
 - 不要说“channel 没有锁”。channel 自身也有同步成本；这里是业务代码不再显式共享并加锁连接表。
 - 不要说“单 goroutine 一定比 mutex 快”。选择它主要是为了状态所有权和可维护性。
 - 不要把 `Server` 设计成公开 `clients` 字段。Client 应提交事件，而不是直接修改 map。
-- 当前连接表已经完成单一所有者改造；数据库持久化仍需从主事件循环的阻塞路径中拆出。
+- 当前连接表和消息持久化已经分离：Client 调用消息 Service，Server 只管理连接和内存路由。
 
 ---
 
@@ -217,7 +217,7 @@ server.Deliver(message)
 
 ```text
 发送方 WebSocket
-    ↓ Client.read
+    ↓ Client.read 调用消息 Service 完成持久化
 Server routeQueue
     ↓ 查找接收方
 接收方 Client.outbound
@@ -398,7 +398,7 @@ MCP Tool Handler ──┘
 
 > Fable Chat 的 HTTP 层使用标准库 `ServeMux` 统一挂载 Gin 和 MCP，并显式持有 `http.Server` 完成信号驱动的优雅关闭。WebSocket 部分将每个连接封装为 Client，由独立 read/write goroutine 负责网络 I/O，ChatServer 负责在线连接生命周期和消息路由。
 >
-> 在线连接表最初采用共享 map 加 `RWMutex`，随后演进为单一所有者事件循环：Client 只提交注册、注销和路由事件，由 Server 串行修改连接表；在线人数使用原子计数，关闭清理由事件循环完成。这次演进的核心不是宣称 channel 比 mutex 更快，而是明确状态所有权、统一连接生命周期顺序。事件循环还需要进一步移出数据库持久化等阻塞 I/O；规模增长后可以按 UUID 分片，并通过 Redis 支持跨实例路由。
+> 在线连接表最初采用共享 map 加 `RWMutex`，随后演进为单一所有者事件循环：Client 只提交注册、注销和路由事件，由 Server 串行修改连接表；在线人数使用原子计数，关闭清理由事件循环完成。消息持久化由 `Client.read` 调用共享消息 Service 完成，成功后才进入 Server 路由队列，避免数据库 I/O 阻塞整个连接事件循环。这次演进的核心不是宣称 channel 比 mutex 更快，而是明确状态所有权、统一连接生命周期顺序；规模增长后可以按 UUID 分片，并通过 Redis 支持跨实例路由。
 >
 > MCP 与 WebSocket 保持传输层解耦，只复用认证、会话授权和消息业务 Service，避免 AI 功能侵入 IM 连接生命周期。
 

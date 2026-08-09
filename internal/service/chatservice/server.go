@@ -1,12 +1,10 @@
 package chatservice
 
 import (
-	"log"
 	"sync"
 	"sync/atomic"
 
 	"mychat/internal/dto/wschat"
-	"mychat/internal/service/gormservice"
 )
 
 const DefaultQueueSize = 256
@@ -64,17 +62,7 @@ func (s *Server) Start() {
 			s.removeClient(client)
 
 		case message := <-s.inbound:
-			created, err := gormservice.SendMessage(message.SendID, message.ReceiveID, message.Content)
-			if err != nil {
-				log.Printf("persist websocket message: %v", err)
-				continue
-			}
-
-			s.deliver(s.clients[created.ReceiveID], wschat.Message{
-				SendID:    created.SendID,
-				ReceiveID: created.ReceiveID,
-				Content:   created.Content,
-			})
+			s.deliver(s.clients[message.ReceiveID], message)
 
 		case <-s.done:
 			s.closeClients()

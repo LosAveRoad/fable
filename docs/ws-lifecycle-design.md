@@ -23,8 +23,8 @@ Controller
 → Server.register
 
 Client.read
-→ Server.inbound
 → gormservice.SendMessage
+→ Server.inbound
 → Server.deliver
 → Client.outbound
 → Client.write
@@ -50,7 +50,7 @@ Server 是本进程在线连接的唯一管理者。
 
 ~~~text
 入站：
-WebSocket → Client.read → Server.inbound
+WebSocket → Client.read → gormservice.SendMessage → Server.inbound
 
 出站：
 Server.deliver → Client.outbound → Client.write → WebSocket
@@ -187,7 +187,7 @@ read 和 write 是内部 Pump，不对其他包暴露。
 
 ### 4.5 server.go
 
-Server 管理本地在线 Client、注册、注销、WebSocket 入站消息、消息持久化调用和在线投递。
+Server 管理本地在线 Client、注册、注销和在线投递。消息持久化由 `Client.read` 调用消息 Service 完成，Server 事件循环不访问数据库。
 
 ~~~go
 type Server struct {
@@ -276,6 +276,8 @@ Server.register
 Client.read
 → conn.ReadJSON
 → 验证 message.SendID == client.userUUID
+→ gormservice.SendMessage
+→ MySQL
 → server.submit
 → Server.inbound
 ~~~
@@ -286,8 +288,6 @@ Sender 必须与 Token 用户一致。
 
 ~~~text
 Server.inbound
-→ gormservice.SendMessage
-→ MySQL
 → Server.deliver(receiver)
 ~~~
 
@@ -381,7 +381,7 @@ MCP 不走 WebSocket，也不进入 Server.inbound。
 
 ~~~text
 WebSocket：
-Client.read → Server.inbound → gormservice.SendMessage
+Client.read → gormservice.SendMessage → Server.inbound
 
 MCP：
 MCP HTTP → Tool → aiservice 权限检查 → gormservice.SendMessage

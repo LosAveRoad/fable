@@ -100,6 +100,29 @@ func TestSlowClientDoesNotBlockServer(t *testing.T) {
 	waitForOnlineCount(t, server, 1)
 }
 
+func TestServerRoutesSubmittedMessage(t *testing.T) {
+	server := startTestServer(t)
+	receiver := NewClient(server, nil, "U-receiver", 1)
+	if !server.Register(receiver) {
+		t.Fatal("Register returned false")
+	}
+	waitForOnlineCount(t, server, 1)
+
+	message := wschat.Message{SendID: "U-sender", ReceiveID: "U-receiver", Content: "hello"}
+	if !server.submit(message) {
+		t.Fatal("submit returned false")
+	}
+
+	select {
+	case received := <-receiver.outbound:
+		if received != message {
+			t.Fatalf("received message = %+v, want %+v", received, message)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("submitted message was not routed")
+	}
+}
+
 func TestServerCloseStopsLoopAndClients(t *testing.T) {
 	server := startTestServer(t)
 	first := NewClient(server, nil, "U-first", 1)
