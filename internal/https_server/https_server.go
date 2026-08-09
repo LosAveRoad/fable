@@ -32,6 +32,16 @@ func NewEngine(jwtKey []byte) *gin.Engine {
 		Auth(jwtKey),
 		v1.GetMessageList,
 	)
+	r.GET(
+		"/api/v1/ai/setting",
+		Auth(jwtKey),
+		v1.GetAISetting,
+	)
+	r.PUT(
+		"/api/v1/ai/setting",
+		Auth(jwtKey),
+		v1.ChangeAISetting,
+	)
 	r.GET("/wss", WsAuth(jwtKey), v1.WsController)
 	return r
 }

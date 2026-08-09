@@ -1,9 +1,13 @@
 package main
 
 import (
+	"log"
+	"net/http"
+
 	"mychat/internal/config"
 	"mychat/internal/dao"
 	"mychat/internal/https_server"
+	"mychat/internal/mcpserver"
 	"mychat/internal/service/gormservice"
 )
 
@@ -18,6 +22,13 @@ func main() {
 	}
 	defer dao.CloseGorm()
 
-	r := https_server.NewEngine(cfg.JWTConfig.Secret)
-	r.Run(":8080")
+	ginHandler := https_server.NewEngine(cfg.JWTConfig.Secret)
+	mcpHandler := mcpserver.NewHTTPHandler(mcpserver.New(), cfg.JWTConfig.Secret)
+
+	root := http.NewServeMux()
+	root.Handle("/mcp", mcpHandler)
+	root.Handle("/", ginHandler)
+
+	log.Println("chat and MCP server listening on http://localhost:8080")
+	log.Fatal(http.ListenAndServe(":8080", root))
 }

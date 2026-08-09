@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	appauth "mychat/internal/auth"
+
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -15,7 +17,7 @@ const testJWTSecret = "test-secret"
 func makeTestToken(t *testing.T, secret string, userUUID string, expiresAt time.Time) string {
 	t.Helper()
 
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, Claims{
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, appauth.Claims{
 		UserUUID: userUUID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expiresAt),

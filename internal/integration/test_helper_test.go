@@ -19,6 +19,7 @@ import (
 	"mychat/internal/dao"
 	"mychat/internal/dto/response"
 	"mychat/internal/https_server"
+	"mychat/internal/mcpserver"
 	"mychat/internal/model"
 	"mychat/internal/service/gormservice"
 
@@ -44,7 +45,10 @@ func TestMain(m *testing.M) {
 	gormservice.InitJWT(config.JWTConfig{Secret: testJWTKey})
 
 	cleanupDatabase()
-	testServer = httptest.NewServer(https_server.NewEngine(testJWTKey))
+	root := http.NewServeMux()
+	root.Handle("/mcp", mcpserver.NewHTTPHandler(mcpserver.New(), testJWTKey))
+	root.Handle("/", https_server.NewEngine(testJWTKey))
+	testServer = httptest.NewServer(root)
 
 	code := m.Run()
 
@@ -75,9 +79,45 @@ func cleanupDatabase() {
 	if dao.GormDB == nil {
 		return
 	}
+	_ = dao.GormDB.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&model.UserAISessionAccess{}).Error
 	_ = dao.GormDB.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&model.Message{}).Error
 	_ = dao.GormDB.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&model.Session{}).Error
 	_ = dao.GormDB.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&model.UserInfo{}).Error
+}
+
+func requestJSON(t *testing.T, method string, path string, body any, token string, result any) *http.Response {
+	t.Helper()
+
+	var reader io.Reader
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reader = bytes.NewReader(data)
+	}
+	req, err := http.NewRequest(method, testServer.URL+path, reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != nil {
+		defer resp.Body.Close()
+		if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
+			t.Fatalf("decode %s response: %v", path, err)
+		}
+	}
+	return resp
 }
 
 func postJSON(t *testing.T, path string, body any, token string, result any) *http.Response {
