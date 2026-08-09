@@ -4,6 +4,7 @@ button, input { padding: 9px; border: 1px solid #ccc; border-radius: 4px; }
 button { cursor: pointer; background: #2563eb; color: white; border: 0; }
 input { width: 100%; }
 .card { width: 320px; margin: 15vh auto; padding: 24px; background: white; border-radius: 8px; }
+.brand-logo { display: block; width: 180px; max-width: 100%; margin: 0 auto 20px; }
 .card form, #open-session-form, #message-form { display: grid; gap: 10px; }
 .link { margin-top: 12px; padding: 0; background: none; color: #2563eb; }
 .message { color: #b91c1c; min-height: 18px; }
