@@ -60,16 +60,7 @@ func WsAuth(jwtKey []byte) gin.HandlerFunc {
 			return
 		}
 
-		if clientID := strings.TrimSpace(c.Query("client_id")); clientID != "" && clientID != claims.UserUUID {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-				"error": "client_id does not match token user",
-			})
-			return
-		}
-
 		c.Set("user_uuid", claims.UserUUID)
-		// WsController currently reads user_id; keep both keys during the MVP0 transition.
-		c.Set("user_id", claims.UserUUID)
 		c.Next()
 	}
 }

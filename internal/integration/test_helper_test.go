@@ -21,6 +21,7 @@ import (
 	"mychat/internal/https_server"
 	"mychat/internal/mcpserver"
 	"mychat/internal/model"
+	"mychat/internal/service/chatservice"
 	"mychat/internal/service/gormservice"
 
 	"github.com/google/uuid"
@@ -45,6 +46,8 @@ func TestMain(m *testing.M) {
 	gormservice.InitJWT(config.JWTConfig{Secret: testJWTKey})
 
 	cleanupDatabase()
+	chatservice.ChatServer = chatservice.NewServer(chatservice.DefaultQueueSize)
+	go chatservice.ChatServer.Start()
 	root := http.NewServeMux()
 	root.Handle("/mcp", mcpserver.NewHTTPHandler(mcpserver.New(), testJWTKey))
 	root.Handle("/", https_server.NewEngine(testJWTKey))
@@ -53,6 +56,7 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 
 	testServer.Close()
+	chatservice.ChatServer.Close()
 	cleanupDatabase()
 	_ = dao.CloseGorm()
 	os.Exit(code)
@@ -206,7 +210,6 @@ func websocketURL(t *testing.T, user testUser) string {
 	parsed.Path = "/wss"
 	query := parsed.Query()
 	query.Set("token", user.Token)
-	query.Set("client_id", user.UUID)
 	parsed.RawQuery = query.Encode()
 	return parsed.String()
 }

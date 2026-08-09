@@ -1,12 +1,69 @@
 package gormservice
 
 import (
+	"errors"
 	"regexp"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 )
+
+func TestSendMessagePersistsSessionMessage(t *testing.T) {
+	mock, cleanup := newMockGormDB(t)
+	defer cleanup()
+
+	createdAt := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT * FROM `session` WHERE (send_id = ? AND receive_id = ?) OR (send_id = ? AND receive_id = ?) ORDER BY `session`.`id` LIMIT ?")).
+		WithArgs("U001", "U002", "U002", "U001", 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "uuid", "send_id", "receive_id", "created_at"}).
+			AddRow(1, "S001", "U001", "U002", createdAt))
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT INTO `message`").
+		WithArgs(sqlmock.AnyArg(), "S001", 0, "hello", "U001", "U002", sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	result, err := SendMessage("U001", "U002", "hello")
+	if err != nil {
+		t.Fatalf("SendMessage() error = %v", err)
+	}
+	if result.UUID == "" || result.SessionID != "S001" || result.SendID != "U001" || result.ReceiveID != "U002" || result.Content != "hello" {
+		t.Fatalf("result = %+v", result)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSendMessageRejectsMissingSession(t *testing.T) {
+	mock, cleanup := newMockGormDB(t)
+	defer cleanup()
+
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT * FROM `session` WHERE (send_id = ? AND receive_id = ?) OR (send_id = ? AND receive_id = ?) ORDER BY `session`.`id` LIMIT ?")).
+		WithArgs("U001", "U002", "U002", "U001", 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "uuid", "send_id", "receive_id", "created_at"}))
+
+	_, err := SendMessage("U001", "U002", "hello")
+	if !errors.Is(err, ErrInvalidSession) {
+		t.Fatalf("error = %v, want %v", err, ErrInvalidSession)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSendMessageRejectsInvalidInput(t *testing.T) {
+	_, err := SendMessage("U001", "U001", "hello")
+	if !errors.Is(err, ErrInvalidUserPair) {
+		t.Fatalf("error = %v, want %v", err, ErrInvalidUserPair)
+	}
+
+	_, err = SendMessage("U001", "U002", "")
+	if !errors.Is(err, ErrInvalidMessageContent) {
+		t.Fatalf("error = %v, want %v", err, ErrInvalidMessageContent)
+	}
+}
 
 func TestGetMessageListReturnsBothDirectionsInOrder(t *testing.T) {
 	mock, cleanup := newMockGormDB(t)

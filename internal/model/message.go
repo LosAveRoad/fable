@@ -2,6 +2,8 @@ package model
 
 import "time"
 
+const MessageTypeText int8 = 0
+
 type Message struct {
 	ID   int64  `gorm:"column:id;primaryKey"`
 	UUID string `gorm:"column:uuid;uniqueIndex;type:char(37);not null"`

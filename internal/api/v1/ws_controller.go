@@ -5,37 +5,39 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-
 	"github.com/gorilla/websocket"
 )
 
 var upgrader = websocket.Upgrader{
+	ReadBufferSize:  2048,
+	WriteBufferSize: 2048,
 	CheckOrigin: func(r *http.Request) bool {
 		return true
 	},
 }
 
 func WsController(c *gin.Context) {
-	conn, err := upgrader.Upgrade(
-		c.Writer,
-		c.Request,
-		nil,
-	)
-	if err != nil {
-		return
-	}
-
-	userID, ok := c.Get("user_id")
+	userID, ok := c.Get("user_uuid")
 	if !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"error": "unauthorized",
 		})
+		return
 	}
 
-	uid := userID.(string)
+	uid, ok := userID.(string)
+	if !ok || uid == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": "unauthorized",
+		})
+		return
+	}
 
-	chatservice.RegisterUser(uid)
+	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+	if err != nil {
+		return
+	}
 
-	go chatservice.ReadPump(conn, uid)
-	go chatservice.WritePump(conn, uid)
+	client := chatservice.NewClient(chatservice.ChatServer, conn, uid, chatservice.DefaultQueueSize)
+	client.Start()
 }
