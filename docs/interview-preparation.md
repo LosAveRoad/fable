@@ -18,6 +18,8 @@
 2. `OnlineCount` 读取独立的 `atomic.Int64`，不会从事件循环外读取 map。
 3. `Close` 只发送关闭信号；事件循环清理 `clients`、关闭全部 Client，并通过 `stopped` 通知调用方清理完成。
 
+Server 生命周期固定为 `NewServer → go Start → Close`。`Start` 只允许调用一次，因此不使用 `startOnce` 掩盖重复启动；未启动就关闭、关闭后重新启动都属于调用方错误。
+
 目前仍有一个后续优化点：`gormservice.SendMessage` 还在主事件循环中执行，数据库延迟会阻塞后续注册、注销和消息路由。因此可以说明连接表已经采用单一所有者模型，但暂时不能声称事件循环内只有 O(1) 的内存操作。
 
 ---

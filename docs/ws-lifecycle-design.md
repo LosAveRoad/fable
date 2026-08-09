@@ -199,7 +199,6 @@ type Server struct {
     unregister chan *Client
     done       chan struct{}
     stopped    chan struct{}
-    startOnce  sync.Once
     closeOnce  sync.Once
 }
 
@@ -215,7 +214,7 @@ func (s *Server) removeClient(client *Client)
 func (s *Server) deliver(client *Client, message wschat.Message) bool
 ~~~
 
-事件 Channel 和在线 Map 全部不导出，防止其他包绕过生命周期方法。`clients` 只由 `Start` 的事件循环访问；`OnlineCount` 读取独立的原子计数；`Close` 等待事件循环完成清理，因此连接表不需要 `RWMutex`。
+事件 Channel 和在线 Map 全部不导出，防止其他包绕过生命周期方法。`clients` 只由 `Start` 的事件循环访问；`OnlineCount` 读取独立的原子计数；`Close` 等待事件循环完成清理，因此连接表不需要 `RWMutex`。生命周期固定为 `NewServer → go Start → Close`，未启动就关闭或关闭后重新启动都不属于合法用法。
 
 ### 4.6 message_service.go
 

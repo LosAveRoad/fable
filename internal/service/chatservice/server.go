@@ -20,7 +20,6 @@ type Server struct {
 	unregister chan *Client
 	done       chan struct{}
 	stopped    chan struct{}
-	startOnce  sync.Once
 	closeOnce  sync.Once
 }
 
@@ -42,10 +41,6 @@ func NewServer(queueSize int) *Server {
 }
 
 func (s *Server) Start() {
-	s.startOnce.Do(s.run)
-}
-
-func (s *Server) run() {
 	defer close(s.stopped)
 
 	for {
@@ -163,7 +158,6 @@ func (s *Server) Close() {
 		close(s.done)
 	})
 
-	s.Start()
 	<-s.stopped
 }
 

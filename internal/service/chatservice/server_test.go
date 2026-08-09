@@ -38,7 +38,6 @@ func waitForClosedClient(t *testing.T, client *Client) {
 
 func TestNewServerInitializesState(t *testing.T) {
 	server := NewServer(4)
-	defer server.Close()
 
 	if server.clients == nil || server.register == nil || server.unregister == nil || server.inbound == nil || server.stopped == nil {
 		t.Fatal("NewServer did not initialize state and channels")
@@ -127,7 +126,6 @@ func TestServerCloseStopsLoopAndClients(t *testing.T) {
 
 func TestNewClientHasSingleOutboundQueue(t *testing.T) {
 	server := NewServer(4)
-	defer server.Close()
 	client := NewClient(server, nil, "U-test-user", 4)
 
 	if client.server != server || client.userUUID != "U-test-user" {
