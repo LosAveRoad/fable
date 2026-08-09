@@ -1,7 +1,8 @@
 package wschat
 
 type Message struct {
-	SendId    string `json:"send_id"`
-	ReceiveId string `json:"receive_id"`
+	SendID    string `json:"send_id"`
+	ReceiveID string `json:"receive_id"`
 	Content   string `json:"content"`
+	Origin    int8   `json:"origin"`
 }

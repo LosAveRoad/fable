@@ -19,7 +19,9 @@ import (
 	"mychat/internal/dao"
 	"mychat/internal/dto/response"
 	"mychat/internal/https_server"
+	"mychat/internal/mcpserver"
 	"mychat/internal/model"
+	"mychat/internal/service/chatservice"
 	"mychat/internal/service/gormservice"
 
 	"github.com/google/uuid"
@@ -44,11 +46,17 @@ func TestMain(m *testing.M) {
 	gormservice.InitJWT(config.JWTConfig{Secret: testJWTKey})
 
 	cleanupDatabase()
-	testServer = httptest.NewServer(https_server.NewEngine(testJWTKey))
+	chatservice.ChatServer = chatservice.NewServer(chatservice.DefaultQueueSize)
+	go chatservice.ChatServer.Start()
+	root := http.NewServeMux()
+	root.Handle("/mcp", mcpserver.NewHTTPHandler(mcpserver.New(), testJWTKey))
+	root.Handle("/", https_server.NewEngine(testJWTKey))
+	testServer = httptest.NewServer(root)
 
 	code := m.Run()
 
 	testServer.Close()
+	chatservice.ChatServer.Close()
 	cleanupDatabase()
 	_ = dao.CloseGorm()
 	os.Exit(code)
@@ -75,9 +83,45 @@ func cleanupDatabase() {
 	if dao.GormDB == nil {
 		return
 	}
+	_ = dao.GormDB.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&model.UserAISessionAccess{}).Error
 	_ = dao.GormDB.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&model.Message{}).Error
 	_ = dao.GormDB.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&model.Session{}).Error
 	_ = dao.GormDB.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&model.UserInfo{}).Error
+}
+
+func requestJSON(t *testing.T, method string, path string, body any, token string, result any) *http.Response {
+	t.Helper()
+
+	var reader io.Reader
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reader = bytes.NewReader(data)
+	}
+	req, err := http.NewRequest(method, testServer.URL+path, reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != nil {
+		defer resp.Body.Close()
+		if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
+			t.Fatalf("decode %s response: %v", path, err)
+		}
+	}
+	return resp
 }
 
 func postJSON(t *testing.T, path string, body any, token string, result any) *http.Response {
@@ -166,7 +210,6 @@ func websocketURL(t *testing.T, user testUser) string {
 	parsed.Path = "/wss"
 	query := parsed.Query()
 	query.Set("token", user.Token)
-	query.Set("client_id", user.UUID)
 	parsed.RawQuery = query.Encode()
 	return parsed.String()
 }
@@ -190,4 +233,5 @@ type wschatMessage struct {
 	SendID    string `json:"send_id"`
 	ReceiveID string `json:"receive_id"`
 	Content   string `json:"content"`
+	Origin    int8   `json:"origin"`
 }

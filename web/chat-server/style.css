@@ -4,6 +4,7 @@ button, input { padding: 9px; border: 1px solid #ccc; border-radius: 4px; }
 button { cursor: pointer; background: #2563eb; color: white; border: 0; }
 input { width: 100%; }
 .card { width: 320px; margin: 15vh auto; padding: 24px; background: white; border-radius: 8px; }
+.brand-logo { display: block; width: 180px; max-width: 100%; margin: 0 auto 20px; }
 .card form, #open-session-form, #message-form { display: grid; gap: 10px; }
 .link { margin-top: 12px; padding: 0; background: none; color: #2563eb; }
 .message { color: #b91c1c; min-height: 18px; }
@@ -17,6 +18,7 @@ aside { padding: 12px; border-right: 1px solid #ddd; }
 #messages { padding: 16px; overflow: auto; }
 .msg { margin: 8px 0; padding: 8px 10px; width: fit-content; max-width: 70%; background: #eee; border-radius: 6px; }
 .msg.mine { margin-left: auto; background: #bfdbfe; }
+.ai-origin { display: block; margin-top: 4px; font-size: 11px; opacity: 0.7; }
 #message-form { grid-template-columns: 1fr auto; padding: 10px; border-top: 1px solid #ddd; }
 #message-form button { width: 60px; }
 #chat-message { margin: 0 10px; }

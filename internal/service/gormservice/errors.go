@@ -20,7 +20,9 @@ var (
 	ErrForbidden        = errors.New("forbidden")
 
 	// 数据库异常
-	ErrDatabase = errors.New("database error")
+	ErrDatabase              = errors.New("database error")
+	ErrInvalidUserPair       = errors.New("invalid message user pair")
+	ErrInvalidMessageContent = errors.New("invalid message content")
 
 	// 会话
 	ErrInvalidSession    = errors.New("invalid session request")

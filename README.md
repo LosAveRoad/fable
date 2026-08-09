@@ -1,5 +1,11 @@
 # Fable Chat
 
+<p align="center">
+  <img src="web/chat-server/fable-im-logo.png" alt="Fable IM" width="420">
+</p>
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 这是一个按四个 MVP 阶段“生长出来”的 KamaChat 复刻与扩展项目。目录层次、主要模型、接口分层和前端页面尽量保持与 KamaChat 一致，再通过 AI/MCP、可靠性和分布式能力形成自己的增量。
 
 ## 学习约定
@@ -39,3 +45,7 @@
 ## 当前起点
 
 先阅读 [KamaChat 参考映射](docs/kamachat-reference.md) 的 MVP0 部分，再亲手完成 `go mod init`、目录建立和第一个入口文件。不要提前创建 MVP1—MVP3 的包和目录。
+
+## License
+
+Fable Chat 的自有代码采用 [MIT License](LICENSE) 开源。

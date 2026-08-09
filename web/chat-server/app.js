@@ -114,14 +114,22 @@ async function loadMessages() {
 function addMessage(item) {
   const node = document.createElement('div');
   node.className = 'msg' + ((item.send_id || item.from) === me?.uuid ? ' mine' : '');
-  node.textContent = item.content || item.message || '';
+  const body = document.createElement('span');
+  body.textContent = item.content || item.message || '';
+  node.appendChild(body);
+  if (item.origin === 1) {
+    const origin = document.createElement('small');
+    origin.className = 'ai-origin';
+    origin.textContent = 'Sent by AI';
+    node.appendChild(origin);
+  }
   $('messages').appendChild(node);
   $('messages').scrollTop = $('messages').scrollHeight;
 }
 
 function connectSocket() {
   socket?.close();
-  const params = new URLSearchParams({ token, client_id: me.uuid });
+  const params = new URLSearchParams({ token });
   socket = new WebSocket(`${WS}/wss?${params}`);
   const activeSocket = socket;
   socket.onopen = () => {
@@ -137,7 +145,11 @@ function connectSocket() {
   };
   socket.onmessage = event => {
     const item = JSON.parse(event.data);
-    if (!currentSession || item.send_id !== currentSession.user_id) return;
+    if (!currentSession) return;
+    const peer = currentSession.user_id;
+    const receivedFromPeer = item.send_id === peer && item.receive_id === me?.uuid;
+    const aiEchoFromMe = item.origin === 1 && item.send_id === me?.uuid && item.receive_id === peer;
+    if (!receivedFromPeer && !aiEchoFromMe) return;
     addMessage(item);
   };
 }

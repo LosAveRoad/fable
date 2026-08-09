@@ -79,3 +79,11 @@ func GetUserSessionList(userUUID string) ([]response.UserSessionListResponse, er
 
 	return result, nil
 }
+
+func GetSessionUsers(sessionUUID string) (string, string, error) {
+	var session model.Session
+	if err := dao.GormDB.Model(model.Session{}).Where("uuid = ?", sessionUUID).First(&session).Error; err != nil {
+		return "", "", err
+	}
+	return session.SendId, session.ReceiveId, nil
+}

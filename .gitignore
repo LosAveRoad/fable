@@ -2,7 +2,9 @@
 
 # 本地配置和敏感信息
 config/config.toml
-ZChat/configs/config.toml
+
+# 仅供本地阅读的参考项目，不属于 Fable 源码
+ZChat/
 
 # Go 构建产物
 bin/
