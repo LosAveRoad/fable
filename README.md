@@ -49,5 +49,3 @@
 ## License
 
 Fable Chat 的自有代码采用 [MIT License](LICENSE) 开源。
-
-`ZChat/` 是仓库内保留的第三方参考项目，不属于 Fable Chat 的 MIT 授权范围，继续遵循其目录中的 [GPL-3.0 License](ZChat/LICENSE)。
