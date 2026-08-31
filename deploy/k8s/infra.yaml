@@ -53,7 +53,9 @@ spec:
             - {name: KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE, value: "false"}
             - {name: KAFKA_CFG_NUM_PARTITIONS, value: "6"}
             - {name: ALLOW_PLAINTEXT_LISTENER, value: "yes"}
-          ports: [{containerPort: 9092}]
+          ports:
+            - {name: kafka, containerPort: 9092}
+            - {name: controller, containerPort: 9093}
           volumeMounts: [{name: data, mountPath: /bitnami/kafka}]
       volumes: [{name: data, persistentVolumeClaim: {claimName: kafka-data}}]
 ---
@@ -62,7 +64,9 @@ kind: Service
 metadata: {name: kafka, namespace: fable}
 spec:
   selector: {app: kafka}
-  ports: [{port: 9092, targetPort: 9092}]
+  ports:
+    - {name: kafka, port: 9092, targetPort: kafka}
+    - {name: controller, port: 9093, targetPort: controller}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

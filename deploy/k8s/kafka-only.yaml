@@ -23,16 +23,23 @@ spec:
           image: bitnamilegacy/kafka:3.9.0
           env:
             - {name: KAFKA_CFG_NODE_ID, value: "1"}
-            - {name: KAFKA_CFG_PROCESS_ROLES, value: broker,controller}
-            - {name: KAFKA_CFG_CONTROLLER_QUORUM_VOTERS, value: 1@kafka:9093}
-            - {name: KAFKA_CFG_LISTENERS, value: PLAINTEXT://:9092,CONTROLLER://:9093}
-            - {name: KAFKA_CFG_ADVERTISED_LISTENERS, value: PLAINTEXT://kafka:9092}
-            - {name: KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP, value: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT}
+            - {name: KAFKA_CFG_PROCESS_ROLES, value: "broker,controller"}
+            - {name: KAFKA_CFG_CONTROLLER_QUORUM_VOTERS, value: "1@kafka:9093"}
+            - {name: KAFKA_CFG_LISTENERS, value: "PLAINTEXT://:9092,CONTROLLER://:9093"}
+            - {name: KAFKA_CFG_ADVERTISED_LISTENERS, value: "PLAINTEXT://kafka:9092"}
+            - {name: KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP, value: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"}
             - {name: KAFKA_CFG_CONTROLLER_LISTENER_NAMES, value: CONTROLLER}
+            - {name: KAFKA_CFG_INTER_BROKER_LISTENER_NAME, value: PLAINTEXT}
             - {name: KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE, value: "false"}
             - {name: KAFKA_CFG_NUM_PARTITIONS, value: "6"}
+            - {name: KAFKA_CFG_OFFSETS_TOPIC_REPLICATION_FACTOR, value: "1"}
+            - {name: KAFKA_CFG_TRANSACTION_STATE_LOG_REPLICATION_FACTOR, value: "1"}
+            - {name: KAFKA_CFG_TRANSACTION_STATE_LOG_MIN_ISR, value: "1"}
+            - {name: KAFKA_HEAP_OPTS, value: "-Xms256m -Xmx512m"}
             - {name: ALLOW_PLAINTEXT_LISTENER, value: "yes"}
-          ports: [{name: kafka, containerPort: 9092}]
+          ports:
+            - {name: kafka, containerPort: 9092}
+            - {name: controller, containerPort: 9093}
           volumeMounts: [{name: data, mountPath: /bitnami/kafka}]
       volumes: [{name: data, persistentVolumeClaim: {claimName: kafka-data}}]
 ---
@@ -41,4 +48,6 @@ kind: Service
 metadata: {name: kafka, namespace: fable}
 spec:
   selector: {app: kafka}
-  ports: [{name: kafka, port: 9092, targetPort: kafka}]
+  ports:
+    - {name: kafka, port: 9092, targetPort: kafka}
+    - {name: controller, port: 9093, targetPort: controller}
