@@ -1,0 +1,22 @@
+name: Frontend CD
+on:
+  push:
+    branches: [main]
+    paths: ['web/chat-server/**']
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 22, cache: npm, cache-dependency-path: web/chat-server/package-lock.json}
+      - run: npm ci
+        working-directory: web/chat-server
+      - run: npm run build
+        working-directory: web/chat-server
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: web/chat-server
+          command: pages deploy dist --project-name=${{ vars.CLOUDFLARE_PAGES_PROJECT }}

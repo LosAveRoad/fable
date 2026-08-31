@@ -1,12 +1,14 @@
 package gormservice
 
 import (
+	"context"
 	"fmt"
 	"mychat/internal/config"
 	"mychat/internal/dao"
 	"mychat/internal/dto/request"
 	"mychat/internal/dto/response"
 	"mychat/internal/model"
+	"mychat/internal/service/redisservice"
 	"regexp"
 	"time"
 
@@ -134,6 +136,10 @@ func GetUserInfo(r *request.GetUserInfoRequest, uuid_any any) (*response.GetUser
 	if !ok {
 		return nil, ErrInvalidUUID
 	}
+	var cached response.GetUserInfoResponse
+	if err := redisservice.GetJSON(context.Background(), redisservice.UserInfoKey(uuid), &cached); err == nil {
+		return &cached, nil
+	}
 
 	var user model.UserInfo
 
@@ -145,9 +151,11 @@ func GetUserInfo(r *request.GetUserInfoRequest, uuid_any any) (*response.GetUser
 		return nil, ErrUserAccessDenied
 	}
 
-	return &response.GetUserInfoResponse{
+	result := response.GetUserInfoResponse{
 		UUID:      user.UUID,
 		Nickname:  user.Nickname,
 		Telephone: user.Telephone,
-	}, nil
+	}
+	_ = redisservice.SetJSON(context.Background(), redisservice.UserInfoKey(uuid), result, redisservice.DefaultCacheTTL)
+	return &result, nil
 }

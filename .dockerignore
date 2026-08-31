@@ -1,0 +1,6 @@
+.git
+.github
+.env
+ZChat
+bin
+**/*_test.go

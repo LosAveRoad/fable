@@ -11,10 +11,12 @@ import (
 
 	"mychat/internal/config"
 	"mychat/internal/dao"
+	"mychat/internal/dto/wschat"
 	"mychat/internal/https_server"
 	"mychat/internal/mcpserver"
 	"mychat/internal/service/chatservice"
 	"mychat/internal/service/gormservice"
+	"mychat/internal/service/kafkaservice"
 )
 
 func main() {
@@ -36,6 +38,35 @@ func run(ctx context.Context) error {
 		return err
 	}
 	defer dao.CloseGorm()
+	if cfg.RedisConfig.Enabled {
+		if err := dao.InitRedis(cfg.RedisConfig); err != nil {
+			if cfg.RedisConfig.Required {
+				return err
+			}
+			log.Printf("redis disabled after initialization failure: %v", err)
+		}
+		defer dao.CloseRedis()
+	}
+	var kafkaSvc *kafkaservice.Service
+	if cfg.KafkaConfig.Enabled && cfg.KafkaConfig.Mode == "kafka" {
+		kafkaSvc, err = kafkaservice.New(cfg.KafkaConfig)
+		if err != nil {
+			if cfg.KafkaConfig.Required {
+				return err
+			}
+			log.Printf("kafka disabled after initialization failure: %v", err)
+		} else {
+			chatservice.PublishChatEvent = kafkaSvc.Publish
+			go func() {
+				if consumeErr := kafkaSvc.Consume(ctx, func(_ context.Context, event wschat.ChatEvent) error {
+					return chatservice.ChatServer.HandleMessage(event.SenderID, wschat.Message{SendID: event.SenderID, ReceiveID: event.ReceiveID, ReceiveType: event.ReceiveType, Content: event.Content})
+				}); consumeErr != nil && ctx.Err() == nil {
+					log.Printf("kafka consumer stopped: %v", consumeErr)
+				}
+			}()
+			defer func() { chatservice.PublishChatEvent = nil; _ = kafkaSvc.Close() }()
+		}
+	}
 	defer chatservice.ChatServer.Close()
 	go chatservice.ChatServer.Start()
 
@@ -43,6 +74,10 @@ func run(ctx context.Context) error {
 	mcpHandler := mcpserver.NewHTTPHandler(mcpserver.New(), cfg.JWTConfig.Secret)
 
 	root := http.NewServeMux()
+	root.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
 	root.Handle("/mcp", mcpHandler)
 	root.Handle("/", ginHandler)
 

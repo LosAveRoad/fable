@@ -24,6 +24,10 @@ type Message struct {
 	CreatedAt time.Time `gorm:"column:created_at;index;not null"`
 }
 
+// ReceiveID is a user UUID for direct messages and a group UUID (G...) for
+// group messages. Keeping one message table makes history and delivery share
+// the same persistence path.
+
 func (Message) TableName() string {
 	return "message"
 }

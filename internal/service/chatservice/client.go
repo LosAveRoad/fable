@@ -1,14 +1,19 @@
 package chatservice
 
 import (
+	"context"
 	"log"
+	"strings"
 	"sync"
+	"time"
 
 	"mychat/internal/dto/wschat"
-	"mychat/internal/service/gormservice"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
+
+var PublishChatEvent func(context.Context, wschat.ChatEvent) error
 
 type Client struct {
 	conn     *websocket.Conn
@@ -56,21 +61,35 @@ func (c *Client) read() {
 		if message.SendID != c.userUUID {
 			return
 		}
-
-		created, err := gormservice.SendMessage(c.userUUID, message.ReceiveID, message.Content)
-		if err != nil {
-			log.Printf("persist websocket message: %v", err)
+		if !validDestination(message.ReceiveID, message.ReceiveType) {
+			log.Printf("invalid websocket destination: type=%d id=%q", message.ReceiveType, message.ReceiveID)
 			continue
 		}
 
-		if !c.server.RouteTo(created.ReceiveID, wschat.Message{
-			SendID:    created.SendID,
-			ReceiveID: created.ReceiveID,
-			Content:   created.Content,
-			Origin:    created.Origin,
-		}) {
-			return
+		if PublishChatEvent != nil {
+			if err := PublishChatEvent(context.Background(), wschat.ChatEvent{EventID: uuid.NewString(), SenderID: c.userUUID, ReceiveID: message.ReceiveID, ReceiveType: message.ReceiveType, Content: message.Content, CreatedAt: time.Now()}); err != nil {
+				log.Printf("publish websocket message: %v", err)
+			}
+			continue
 		}
+		if err := c.server.HandleMessage(c.userUUID, message); err != nil {
+			log.Printf("persist websocket message: %v", err)
+			continue
+		}
+	}
+}
+
+func validDestination(id string, receiveType int8) bool {
+	if id == "" {
+		return false
+	}
+	switch receiveType {
+	case wschat.ReceiveTypeUser:
+		return strings.HasPrefix(id, "U")
+	case wschat.ReceiveTypeGroup:
+		return strings.HasPrefix(id, "G")
+	default:
+		return false
 	}
 }
 

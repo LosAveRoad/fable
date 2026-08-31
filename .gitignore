@@ -2,6 +2,10 @@
 
 # 本地配置和敏感信息
 config/config.toml
+.env
+.env.*
+!.env.example
+deploy/secrets/*.env
 
 # 仅供本地阅读的参考项目，不属于 Fable 源码
 ZChat/

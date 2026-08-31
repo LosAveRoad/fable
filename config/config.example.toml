@@ -7,3 +7,20 @@ databaseName = "mychat"
 
 [jwtConfig]
 secret = "replace-with-a-local-secret"
+
+[redisConfig]
+host = "127.0.0.1"
+port = 6379
+password = ""
+db = 0
+enabled = true
+required = false
+
+[kafkaConfig]
+enabled = false
+required = false
+mode = "channel"
+brokers = ["127.0.0.1:9092"]
+topic = "fable.chat.message"
+consumerGroup = "fable-chat"
+partitionCount = 6

@@ -25,6 +25,14 @@ var (
 	ErrInvalidMessageContent = errors.New("invalid message content")
 
 	// 会话
-	ErrInvalidSession    = errors.New("invalid session request")
-	ErrSessionCreateFail = errors.New("create session failed")
+	ErrInvalidSession        = errors.New("invalid session request")
+	ErrSessionCreateFail     = errors.New("create session failed")
+	ErrInvalidGroup          = errors.New("invalid group request")
+	ErrGroupNotFound         = errors.New("group not found")
+	ErrGroupUnavailable      = errors.New("group unavailable")
+	ErrGroupJoinForbidden    = errors.New("group join forbidden")
+	ErrGroupOwnerCannotLeave = errors.New("group owner cannot leave")
+	ErrNotGroupMember        = errors.New("user is not a group member")
+	ErrGroupJoinPending      = errors.New("group join request pending")
+	ErrNotGroupAdmin         = errors.New("user is not a group administrator")
 )

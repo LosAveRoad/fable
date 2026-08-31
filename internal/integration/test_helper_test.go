@@ -4,6 +4,7 @@ package integration
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,6 +24,7 @@ import (
 	"mychat/internal/model"
 	"mychat/internal/service/chatservice"
 	"mychat/internal/service/gormservice"
+	"mychat/internal/service/redisservice"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -43,9 +45,14 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "integration test database is unavailable: %v\n", err)
 		os.Exit(1)
 	}
+	if err := dao.InitRedis(testRedisConfig()); err != nil {
+		fmt.Fprintf(os.Stderr, "integration redis is unavailable: %v\n", err)
+		os.Exit(1)
+	}
 	gormservice.InitJWT(config.JWTConfig{Secret: testJWTKey})
 
 	cleanupDatabase()
+	_ = redisservice.ScanDelete(context.Background(), "fable:v1:*")
 	chatservice.ChatServer = chatservice.NewServer(chatservice.DefaultQueueSize)
 	go chatservice.ChatServer.Start()
 	root := http.NewServeMux()
@@ -58,6 +65,8 @@ func TestMain(m *testing.M) {
 	testServer.Close()
 	chatservice.ChatServer.Close()
 	cleanupDatabase()
+	_ = redisservice.ScanDelete(context.Background(), "fable:v1:*")
+	_ = dao.CloseRedis()
 	_ = dao.CloseGorm()
 	os.Exit(code)
 }
@@ -70,6 +79,10 @@ func testMySQLConfig() config.MySQLConfig {
 		Password:     envOrDefault("TEST_MYSQL_PASSWORD", "mychat-dev-password"),
 		DatabaseName: envOrDefault("TEST_MYSQL_DATABASE", "mychat_test"),
 	}
+}
+
+func testRedisConfig() config.RedisConfig {
+	return config.RedisConfig{Host: envOrDefault("TEST_REDIS_HOST", "127.0.0.1"), Port: 6379, Password: os.Getenv("TEST_REDIS_PASSWORD"), DB: 0, Enabled: true, Required: true}
 }
 
 func envOrDefault(name, fallback string) string {
@@ -85,6 +98,9 @@ func cleanupDatabase() {
 	}
 	_ = dao.GormDB.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&model.UserAISessionAccess{}).Error
 	_ = dao.GormDB.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&model.Message{}).Error
+	_ = dao.GormDB.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&model.GroupInfo{}).Error
+	_ = dao.GormDB.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&model.UserContact{}).Error
+	_ = dao.GormDB.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&model.ContactApply{}).Error
 	_ = dao.GormDB.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&model.Session{}).Error
 	_ = dao.GormDB.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&model.UserInfo{}).Error
 }
@@ -230,8 +246,9 @@ func waitForMessage(t *testing.T, conn interface {
 }
 
 type wschatMessage struct {
-	SendID    string `json:"send_id"`
-	ReceiveID string `json:"receive_id"`
-	Content   string `json:"content"`
-	Origin    int8   `json:"origin"`
+	SendID      string `json:"send_id"`
+	ReceiveID   string `json:"receive_id"`
+	Content     string `json:"content"`
+	Origin      int8   `json:"origin"`
+	ReceiveType int8   `json:"receive_type"`
 }

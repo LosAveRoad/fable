@@ -1,10 +1,13 @@
 package chatservice
 
 import (
+	"strings"
 	"sync"
 	"sync/atomic"
 
+	"mychat/internal/dto/response"
 	"mychat/internal/dto/wschat"
+	"mychat/internal/service/gormservice"
 )
 
 const DefaultQueueSize = 256
@@ -22,8 +25,8 @@ type Server struct {
 }
 
 type routeRequest struct {
-	userUUID string
-	message  wschat.Message
+	recipients []string
+	message    wschat.Message
 }
 
 var ChatServer = NewServer(DefaultQueueSize)
@@ -67,7 +70,9 @@ func (s *Server) Start() {
 			s.removeClient(client)
 
 		case request := <-s.routeQueue:
-			s.deliver(s.clients[request.userUUID], request.message)
+			for _, userUUID := range request.recipients {
+				s.deliver(s.clients[userUUID], request.message)
+			}
 
 		case <-s.done:
 			s.closeClients()
@@ -106,11 +111,73 @@ func (s *Server) RouteTo(userUUID string, message wschat.Message) bool {
 	}
 
 	select {
-	case s.routeQueue <- routeRequest{userUUID: userUUID, message: message}:
+	case s.routeQueue <- routeRequest{recipients: []string{userUUID}, message: message}:
 		return true
 	case <-s.done:
 		return false
 	}
+}
+
+// RouteToUsers broadcasts one persisted message to each distinct online user.
+// Delivery is best effort; a slow client is handled by deliver without
+// blocking other recipients.
+func (s *Server) RouteToUsers(userUUIDs []string, message wschat.Message) bool {
+	if len(userUUIDs) == 0 {
+		return false
+	}
+	seen := make(map[string]struct{}, len(userUUIDs))
+	recipients := make([]string, 0, len(userUUIDs))
+	for _, id := range userUUIDs {
+		if id != "" {
+			if _, ok := seen[id]; !ok {
+				seen[id] = struct{}{}
+				recipients = append(recipients, id)
+			}
+		}
+	}
+	if len(recipients) == 0 {
+		return false
+	}
+	select {
+	case s.routeQueue <- routeRequest{recipients: recipients, message: message}:
+		return true
+	case <-s.done:
+		return false
+	}
+}
+
+// HandleMessage is shared by Channel and Kafka modes. Only the transport that
+// delivered the event changes; persistence, authorization and fan-out remain
+// identical.
+func (s *Server) HandleMessage(senderID string, incoming wschat.Message) error {
+	if senderID == "" || incoming.SendID != senderID || !validDestination(incoming.ReceiveID, incoming.ReceiveType) {
+		return gormservice.ErrInvalidGroup
+	}
+	var created response.MessageResponse
+	var err error
+	if incoming.ReceiveType == wschat.ReceiveTypeGroup || strings.HasPrefix(incoming.ReceiveID, "G") {
+		created, err = gormservice.SendGroupMessage(senderID, incoming.ReceiveID, incoming.Content)
+	} else {
+		created, err = gormservice.SendMessage(senderID, incoming.ReceiveID, incoming.Content)
+	}
+	if err != nil {
+		return err
+	}
+	outgoing := wschat.Message{SendID: created.SendID, ReceiveID: created.ReceiveID, Content: created.Content, Origin: created.Origin, ReceiveType: incoming.ReceiveType}
+	if incoming.ReceiveType == wschat.ReceiveTypeGroup {
+		group, err := gormservice.GetGroup(incoming.ReceiveID)
+		if err != nil {
+			return err
+		}
+		if !s.RouteToUsers(group.Members, outgoing) {
+			return gormservice.ErrDatabase
+		}
+		return nil
+	}
+	if !s.RouteTo(created.ReceiveID, outgoing) {
+		return gormservice.ErrDatabase
+	}
+	return nil
 }
 
 func (s *Server) removeClient(client *Client) {

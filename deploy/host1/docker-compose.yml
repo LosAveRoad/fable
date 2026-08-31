@@ -1,0 +1,22 @@
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-mychat}
+      MYSQL_USER: ${MYSQL_USER:-fable}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    # 仅允许通过主机防火墙开放给 VPS2；不要对全网开放 3306。
+    ports: ["116.62.153.14:3306:3306"]
+    volumes: ["mysql-data:/var/lib/mysql"]
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    ports: ["0.0.0.0:6379:6379"]
+    volumes: ["redis-data:/data"]
+volumes:
+  mysql-data:
+  redis-data:

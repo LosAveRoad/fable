@@ -123,6 +123,56 @@ func TestServerRoutesMessageToExplicitUser(t *testing.T) {
 	}
 }
 
+func TestServerRoutesMessageToDistinctGroupMembers(t *testing.T) {
+	server := startTestServer(t)
+	first := NewClient(server, nil, "U-first", 2)
+	second := NewClient(server, nil, "U-second", 2)
+	if !server.Register(first) || !server.Register(second) {
+		t.Fatal("Register returned false")
+	}
+	waitForOnlineCount(t, server, 2)
+
+	message := wschat.Message{SendID: "U-owner", ReceiveID: "G-group", ReceiveType: wschat.ReceiveTypeGroup, Content: "hello group"}
+	if !server.RouteToUsers([]string{"U-first", "U-second", "U-first"}, message) {
+		t.Fatal("RouteToUsers returned false")
+	}
+	for _, client := range []*Client{first, second} {
+		select {
+		case received := <-client.outbound:
+			if received != message {
+				t.Fatalf("received message = %+v, want %+v", received, message)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("group message was not routed")
+		}
+	}
+}
+
+func TestServerRouteToUsersRejectsEmptyRecipients(t *testing.T) {
+	server := startTestServer(t)
+	if server.RouteToUsers([]string{"", ""}, wschat.Message{Content: "hello"}) {
+		t.Fatal("RouteToUsers accepted empty recipients")
+	}
+}
+
+func TestValidDestinationRequiresMatchingType(t *testing.T) {
+	for _, test := range []struct {
+		id   string
+		kind int8
+		want bool
+	}{
+		{"U001", wschat.ReceiveTypeUser, true},
+		{"G001", wschat.ReceiveTypeGroup, true},
+		{"G001", wschat.ReceiveTypeUser, false},
+		{"U001", wschat.ReceiveTypeGroup, false},
+		{"U001", 99, false},
+	} {
+		if got := validDestination(test.id, test.kind); got != test.want {
+			t.Fatalf("validDestination(%q,%d) = %v, want %v", test.id, test.kind, got, test.want)
+		}
+	}
+}
+
 func TestServerRouteToRejectsMissingTarget(t *testing.T) {
 	server := startTestServer(t)
 	if server.RouteTo("", wschat.Message{Content: "hello"}) {

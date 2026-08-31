@@ -1,0 +1,29 @@
+name: CD
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['*.md', 'docs/**']
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/losaveroad/fable:${{ github.sha }}
+      - name: Deploy to K3s
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            kubectl -n fable set image deployment/fable fable=ghcr.io/losaveroad/fable:${{ github.sha }}
+            kubectl -n fable rollout status deployment/fable --timeout=180s

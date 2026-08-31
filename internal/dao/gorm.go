@@ -54,6 +54,9 @@ func InitGorm(mysqlConfig config.MySQLConfig) error {
 		&model.Session{},
 		&model.Message{},
 		&model.UserAISessionAccess{},
+		&model.GroupInfo{},
+		&model.UserContact{},
+		&model.ContactApply{},
 	); err != nil {
 		_ = sqlDB.Close()
 		return fmt.Errorf("auto migrate mysql tables: %w", err)

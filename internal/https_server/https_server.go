@@ -32,6 +32,16 @@ func NewEngine(jwtKey []byte) *gin.Engine {
 		Auth(jwtKey),
 		v1.GetMessageList,
 	)
+	r.POST("/group/create", Auth(jwtKey), v1.CreateGroup)
+	r.POST("/group/join", Auth(jwtKey), v1.JoinGroup)
+	r.POST("/group/join/approve", Auth(jwtKey), v1.ApproveGroupJoin)
+	r.POST("/group/leave", Auth(jwtKey), v1.LeaveGroup)
+	r.POST("/group/info", Auth(jwtKey), v1.GetGroupInfo)
+	r.POST("/group/list/joined", Auth(jwtKey), v1.GetJoinedGroupList)
+	r.POST("/group/list/owned", Auth(jwtKey), v1.GetOwnedGroupList)
+	r.POST("/group/message/list", Auth(jwtKey), v1.GetGroupMessageList)
+	r.POST("/session/getGroupSessionList", Auth(jwtKey), v1.GetGroupSessionList)
+	r.POST("/contact/list/users", Auth(jwtKey), v1.GetContactUserList)
 	r.GET(
 		"/api/v1/ai/setting",
 		Auth(jwtKey),
