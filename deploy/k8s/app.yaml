@@ -18,7 +18,7 @@ spec:
           env:
             - {name: FABLE_MYSQL_HOST, value: "116.62.153.14"}
             - {name: FABLE_MYSQL_PORT, value: "3307"}
-            - {name: FABLE_REDIS_HOST, value: "redis"}
+            - {name: FABLE_REDIS_HOST, value: "116.62.153.14"}
             - {name: FABLE_REDIS_ENABLED, value: "true"}
             - {name: FABLE_REDIS_REQUIRED, value: "true"}
             - {name: FABLE_KAFKA_ENABLED, value: "true"}

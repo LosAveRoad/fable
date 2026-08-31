@@ -25,8 +25,9 @@ jobs:
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.DEPLOY_HOST }}
+          port: ${{ secrets.DEPLOY_PORT }}
           username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          password: ${{ secrets.DEPLOY_PASSWORD }}
           script: |
             kubectl -n fable set image deployment/fable fable=ghcr.io/losaveroad/fable:${{ github.sha }}
             kubectl -n fable rollout status deployment/fable --timeout=180s
