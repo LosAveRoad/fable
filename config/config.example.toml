@@ -6,7 +6,7 @@ password = "your_mysql_password"
 databaseName = "mychat"
 
 [jwtConfig]
-secret = "replace-with-a-local-secret"
+secret = [114, 101, 112, 108, 97, 99, 101, 45, 119, 105, 116, 104, 45, 97, 45, 108, 111, 99, 97, 108, 45, 115, 101, 99, 114, 101, 116]
 
 [redisConfig]
 host = "127.0.0.1"
