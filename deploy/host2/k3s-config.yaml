@@ -1,0 +1,5 @@
+node-name: c20250911656124
+disable:
+  - traefik
+kube-proxy-arg:
+  - nodeport-addresses=127.0.0.0/8

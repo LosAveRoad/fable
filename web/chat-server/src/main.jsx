@@ -3,7 +3,8 @@ import { createRoot } from 'react-dom/client';
 import { ArrowLeft, LogOut, Menu, MessageCircle, Plus, RefreshCw, Send, Sparkles, Wifi, WifiOff, X } from 'lucide-react';
 import './styles.css';
 
-const API=''; const WS=`${location.protocol==='https:'?'wss':'ws'}://${location.host}`;
+const API=import.meta.env.VITE_API_BASE||'';
+const WS=import.meta.env.VITE_WS_BASE||`${location.protocol==='https:'?'wss':'ws'}://${location.host}`;
 const api=async(path, token, options={})=>{const r=await fetch(API+path,{...options,headers:{'Content-Type':'application/json',Authorization:token?`Bearer ${token}`:''}});const b=await r.json().catch(()=>({}));if(!r.ok)throw Error(b.error||b.message||`Request failed (${r.status})`);return b.data??b};
 const uuidFrom=(token='')=>{try{return JSON.parse(atob(token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'))).user_uuid||''}catch{return ''}};
 

@@ -34,5 +34,6 @@ metadata:
   name: fable
   namespace: fable
 spec:
+  type: NodePort
   selector: {app: fable}
-  ports: [{name: http, port: 8080, targetPort: http}]
+  ports: [{name: http, port: 8080, targetPort: http, nodePort: 30080}]

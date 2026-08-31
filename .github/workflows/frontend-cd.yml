@@ -14,6 +14,9 @@ jobs:
         working-directory: web/chat-server
       - run: npm run build
         working-directory: web/chat-server
+        env:
+          VITE_API_BASE: ${{ vars.VITE_API_BASE }}
+          VITE_WS_BASE: ${{ vars.VITE_WS_BASE }}
       - uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
