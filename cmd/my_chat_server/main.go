@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -29,6 +30,7 @@ func main() {
 }
 
 func run(ctx context.Context) error {
+	errCh := make(chan error, 2)
 	cfg, err := config.LoadConfig("config/config.toml")
 	if err != nil {
 		return err
@@ -59,9 +61,9 @@ func run(ctx context.Context) error {
 			chatservice.PublishChatEvent = kafkaSvc.Publish
 			go func() {
 				if consumeErr := kafkaSvc.Consume(ctx, func(_ context.Context, event wschat.ChatEvent) error {
-					return chatservice.ChatServer.HandleMessage(event.SenderID, wschat.Message{SendID: event.SenderID, ReceiveID: event.ReceiveID, ReceiveType: event.ReceiveType, Content: event.Content})
+					return chatservice.ChatServer.DeliverEvent(event)
 				}); consumeErr != nil && ctx.Err() == nil {
-					log.Printf("kafka consumer stopped: %v", consumeErr)
+					errCh <- consumeErr
 				}
 			}()
 			defer func() { chatservice.PublishChatEvent = nil; _ = kafkaSvc.Close() }()
@@ -74,7 +76,30 @@ func run(ctx context.Context) error {
 	mcpHandler := mcpserver.NewHTTPHandler(mcpserver.New(), cfg.JWTConfig.Secret)
 
 	root := http.NewServeMux()
-	root.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+	root.HandleFunc("/livez", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+	root.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if dao.GormDB == nil {
+			http.Error(w, "mysql unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		sqlDB, err := dao.GormDB.DB()
+		if err != nil || sqlDB.PingContext(ctx) != nil {
+			http.Error(w, "mysql unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if cfg.RedisConfig.Required && (dao.RedisClient == nil || dao.RedisClient.Ping(ctx).Err() != nil) {
+			http.Error(w, "redis unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if cfg.KafkaConfig.Required && (kafkaSvc == nil || kafkaSvc.Ready(ctx) != nil) {
+			http.Error(w, "kafka unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
@@ -82,10 +107,13 @@ func run(ctx context.Context) error {
 	root.Handle("/", ginHandler)
 
 	server := &http.Server{
-		Addr:    ":8080",
-		Handler: root,
+		Addr:              ":8080",
+		Handler:           root,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
-	errCh := make(chan error, 1)
 	go func() {
 		errCh <- server.ListenAndServe()
 	}()
@@ -100,7 +128,11 @@ func run(ctx context.Context) error {
 	case <-ctx.Done():
 	}
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	shutdownTimeout := 25 * time.Second
+	if os.Getenv("FABLE_FAST_SHUTDOWN") == "true" {
+		shutdownTimeout = 5 * time.Second
+	}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	return server.Shutdown(shutdownCtx)
 }

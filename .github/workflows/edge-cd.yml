@@ -5,7 +5,7 @@ on:
     branches: [main]
     paths:
       - 'deploy/host2/**'
-      - 'deploy/k8s/app-external.yaml'
+      - 'deploy/k8s/app.yaml'
   workflow_dispatch:
 
 jobs:
@@ -19,7 +19,7 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           port: ${{ secrets.DEPLOY_PORT }}
           username: ${{ secrets.DEPLOY_USER }}
-          password: ${{ secrets.DEPLOY_PASSWORD }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
           source: 'deploy/host2/*'
           target: /tmp/fable-edge
           strip_components: 2
@@ -30,7 +30,7 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           port: ${{ secrets.DEPLOY_PORT }}
           username: ${{ secrets.DEPLOY_USER }}
-          password: ${{ secrets.DEPLOY_PASSWORD }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
           command_timeout: 15m
           script: |
             kubectl -n fable patch service fable --type merge -p '{"spec":{"type":"NodePort","ports":[{"name":"http","port":8080,"protocol":"TCP","targetPort":"http","nodePort":30080}]}}'

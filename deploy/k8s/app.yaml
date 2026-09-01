@@ -1,32 +1,58 @@
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: fable
   namespace: fable
 spec:
+  serviceName: fable-internal
   replicas: 2
+  revisionHistoryLimit: 5
+  minReadySeconds: 10
+  updateStrategy:
+    type: RollingUpdate
   selector:
     matchLabels: {app: fable}
   template:
     metadata: {labels: {app: fable}}
     spec:
+      terminationGracePeriodSeconds: 30
+      imagePullSecrets: [{name: ghcr-pull}]
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
       containers:
         - name: fable
-          image: ghcr.io/OWNER/fable:latest
+          image: ghcr.io/losaveroad/fable:stable
+          imagePullPolicy: IfNotPresent
           ports: [{name: http, containerPort: 8080}]
           envFrom: [{secretRef: {name: fable-secret}}]
           env:
-            - {name: FABLE_MYSQL_HOST, value: "116.62.153.14"}
-            - {name: FABLE_MYSQL_PORT, value: "3307"}
-            - {name: FABLE_REDIS_HOST, value: "116.62.153.14"}
             - {name: FABLE_REDIS_ENABLED, value: "true"}
             - {name: FABLE_REDIS_REQUIRED, value: "true"}
             - {name: FABLE_KAFKA_ENABLED, value: "true"}
             - {name: FABLE_KAFKA_REQUIRED, value: "true"}
             - {name: FABLE_KAFKA_MODE, value: "kafka"}
             - {name: FABLE_KAFKA_BROKERS, value: "kafka:9092"}
-          readinessProbe: {httpGet: {path: /healthz, port: http}, initialDelaySeconds: 30, periodSeconds: 10}
-          livenessProbe: {httpGet: {path: /healthz, port: http}, initialDelaySeconds: 60, periodSeconds: 10}
+            - name: FABLE_INSTANCE_ID
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: "1", memory: 512Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          startupProbe: {httpGet: {path: /livez, port: http}, periodSeconds: 5, failureThreshold: 24}
+          readinessProbe: {httpGet: {path: /healthz, port: http}, periodSeconds: 10, timeoutSeconds: 3, failureThreshold: 3}
+          livenessProbe: {httpGet: {path: /livez, port: http}, periodSeconds: 10, timeoutSeconds: 2, failureThreshold: 3}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: fable-internal, namespace: fable}
+spec:
+  clusterIP: None
+  selector: {app: fable}
+  ports: [{name: http, port: 8080, targetPort: http}]
 ---
 apiVersion: v1
 kind: Service
@@ -37,3 +63,10 @@ spec:
   type: NodePort
   selector: {app: fable}
   ports: [{name: http, port: 8080, targetPort: http, nodePort: 30080}]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: fable, namespace: fable}
+spec:
+  minAvailable: 1
+  selector: {matchLabels: {app: fable}}

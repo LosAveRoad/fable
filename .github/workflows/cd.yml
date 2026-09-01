@@ -3,9 +3,45 @@ on:
   push:
     branches: [main]
     paths-ignore: ['*.md', 'docs/**']
+  workflow_dispatch:
 jobs:
-  deploy:
+  test:
     runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: mychat-dev-password
+          MYSQL_DATABASE: mychat_test
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pmychat-dev-password"
+          --health-interval=10s --health-timeout=5s --health-retries=12
+      redis:
+        image: redis:7.4-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s --health-timeout=3s --health-retries=12
+    env:
+      TEST_MYSQL_HOST: 127.0.0.1
+      TEST_MYSQL_USER: root
+      TEST_MYSQL_PASSWORD: mychat-dev-password
+      TEST_MYSQL_DATABASE: mychat_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version-file: go.mod, cache: true}
+      - run: |
+          test -z "$(gofmt -l .)"
+          go vet ./...
+          go test ./...
+          go test -tags=integration -count=1 ./internal/integration
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: production
     permissions:
       contents: read
       packages: write
@@ -21,13 +57,43 @@ jobs:
           context: .
           push: true
           tags: ghcr.io/losaveroad/fable:${{ github.sha }}
+      - name: Upload Kubernetes manifests
+        uses: appleboy/scp-action@v1.0.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          port: ${{ secrets.DEPLOY_PORT }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          source: 'deploy/k8s/*'
+          target: /tmp/fable-release-${{ github.sha }}
+          strip_components: 2
       - name: Deploy to K3s
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           port: ${{ secrets.DEPLOY_PORT }}
           username: ${{ secrets.DEPLOY_USER }}
-          password: ${{ secrets.DEPLOY_PASSWORD }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
-            kubectl -n fable set image deployment/fable fable=ghcr.io/losaveroad/fable:${{ github.sha }}
-            kubectl -n fable rollout status deployment/fable --timeout=180s
+            set -eu
+            release_dir=/tmp/fable-release-${{ github.sha }}
+            kubectl apply -f "$release_dir/namespace.yaml"
+            kubectl -n fable create secret docker-registry ghcr-pull \
+              --docker-server=ghcr.io \
+              --docker-username='${{ secrets.GHCR_PULL_USERNAME }}' \
+              --docker-password='${{ secrets.GHCR_PULL_TOKEN }}' \
+              --dry-run=client -o yaml | kubectl apply -f -
+            kubectl -n fable delete deployment kafka --ignore-not-found=true
+            kubectl -n fable delete deployment fable --ignore-not-found=true
+            kubectl apply -f "$release_dir/infra.yaml"
+            kubectl -n fable wait --for=condition=complete job/kafka-init-topic --timeout=300s
+            sed 's#ghcr.io/losaveroad/fable:stable#ghcr.io/losaveroad/fable:${{ github.sha }}#' \
+              "$release_dir/app.yaml" | kubectl apply -f -
+            if ! kubectl -n fable rollout status statefulset/fable --timeout=300s; then
+              kubectl -n fable rollout undo statefulset/fable
+              kubectl -n fable rollout status statefulset/fable --timeout=300s
+              exit 1
+            fi
+            kubectl -n fable get statefulset fable -o jsonpath='{.spec.template.spec.containers[0].image}' | \
+              grep -Fx 'ghcr.io/losaveroad/fable:${{ github.sha }}'
+            rm -rf "$release_dir"

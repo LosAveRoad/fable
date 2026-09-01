@@ -8,5 +8,6 @@ type ChatEvent struct {
 	ReceiveID   string    `json:"receive_id"`
 	ReceiveType int8      `json:"receive_type"`
 	Content     string    `json:"content"`
+	Origin      int8      `json:"origin"`
 	CreatedAt   time.Time `json:"created_at"`
 }

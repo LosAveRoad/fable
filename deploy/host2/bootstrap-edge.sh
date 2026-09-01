@@ -33,3 +33,6 @@ nginx -t
 systemctl enable --now nginx
 systemctl reload nginx
 systemctl enable --now certbot.timer
+install -d -m 0755 /etc/letsencrypt/renewal-hooks/deploy
+printf '%s\n' '#!/usr/bin/env sh' 'systemctl reload nginx' > /etc/letsencrypt/renewal-hooks/deploy/reload-nginx
+chmod 0755 /etc/letsencrypt/renewal-hooks/deploy/reload-nginx

@@ -5,11 +5,9 @@ import (
 	"log"
 	"strings"
 	"sync"
-	"time"
 
 	"mychat/internal/dto/wschat"
 
-	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
 
@@ -66,12 +64,6 @@ func (c *Client) read() {
 			continue
 		}
 
-		if PublishChatEvent != nil {
-			if err := PublishChatEvent(context.Background(), wschat.ChatEvent{EventID: uuid.NewString(), SenderID: c.userUUID, ReceiveID: message.ReceiveID, ReceiveType: message.ReceiveType, Content: message.Content, CreatedAt: time.Now()}); err != nil {
-				log.Printf("publish websocket message: %v", err)
-			}
-			continue
-		}
 		if err := c.server.HandleMessage(c.userUUID, message); err != nil {
 			log.Printf("persist websocket message: %v", err)
 			continue

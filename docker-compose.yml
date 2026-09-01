@@ -1,6 +1,7 @@
 services:
   fable-1:
     build: .
+    restart: unless-stopped
     env_file: .env
     environment:
       FABLE_MYSQL_HOST: host.docker.internal
@@ -12,10 +13,15 @@ services:
       FABLE_KAFKA_REQUIRED: "true"
       FABLE_KAFKA_MODE: kafka
       FABLE_KAFKA_BROKERS: kafka:9092
+      FABLE_INSTANCE_ID: fable-1
     ports: ["8080:8080"]
-    depends_on: [redis, kafka]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    depends_on:
+      redis: {condition: service_healthy}
+      kafka-init: {condition: service_completed_successfully}
   fable-2:
     build: .
+    restart: unless-stopped
     env_file: .env
     environment:
       FABLE_MYSQL_HOST: host.docker.internal
@@ -27,12 +33,21 @@ services:
       FABLE_KAFKA_REQUIRED: "true"
       FABLE_KAFKA_MODE: kafka
       FABLE_KAFKA_BROKERS: kafka:9092
+      FABLE_INSTANCE_ID: fable-2
     ports: ["8081:8080"]
-    depends_on: [redis, kafka]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    depends_on:
+      redis: {condition: service_healthy}
+      kafka-init: {condition: service_completed_successfully}
   redis:
     image: redis:7.4-alpine
     command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
     volumes: ["redis-data:/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a $$REDIS_PASSWORD ping | grep PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
   kafka:
     image: bitnamilegacy/kafka:3.9.0
     environment:
@@ -47,6 +62,20 @@ services:
       KAFKA_CFG_NUM_PARTITIONS: 6
       ALLOW_PLAINTEXT_LISTENER: "yes"
     volumes: ["kafka-data:/bitnami/kafka"]
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics.sh --bootstrap-server 127.0.0.1:9092 --list >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 20s
+  kafka-init:
+    image: bitnamilegacy/kafka:3.9.0
+    depends_on:
+      kafka: {condition: service_healthy}
+    command:
+      - /bin/bash
+      - -ec
+      - kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic fable.chat.message --partitions 6 --replication-factor 1
 volumes:
   redis-data:
   kafka-data:

@@ -8,15 +8,25 @@ services:
       MYSQL_USER: ${MYSQL_USER:-fable}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
     command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
-    # 仅允许通过主机防火墙开放给 VPS2；不要对全网开放 3306。
-    ports: ["116.62.153.14:3306:3306"]
+    # 只绑定私网/VPN 地址，并通过主机防火墙仅允许应用主机访问。
+    ports: ["${MYSQL_BIND_ADDRESS:?set a private bind address}:3306:3306"]
     volumes: ["mysql-data:/var/lib/mysql"]
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
   redis:
     image: redis:7.4-alpine
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
-    ports: ["0.0.0.0:6379:6379"]
+    ports: ["${REDIS_BIND_ADDRESS:?set a private bind address}:6379:6379"]
     volumes: ["redis-data:/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a $$REDIS_PASSWORD ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
 volumes:
   mysql-data:
   redis-data:

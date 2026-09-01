@@ -21,3 +21,4 @@ bin/
 
 # 前端依赖
 **/node_modules/
+**/dist/

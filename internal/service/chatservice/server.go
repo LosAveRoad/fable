@@ -1,6 +1,7 @@
 package chatservice
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -163,9 +164,18 @@ func (s *Server) HandleMessage(senderID string, incoming wschat.Message) error {
 	if err != nil {
 		return err
 	}
-	outgoing := wschat.Message{SendID: created.SendID, ReceiveID: created.ReceiveID, Content: created.Content, Origin: created.Origin, ReceiveType: incoming.ReceiveType}
-	if incoming.ReceiveType == wschat.ReceiveTypeGroup {
-		group, err := gormservice.GetGroup(incoming.ReceiveID)
+	if PublishChatEvent != nil {
+		return PublishChatEvent(context.Background(), wschat.ChatEvent{EventID: created.UUID, SenderID: created.SendID, ReceiveID: created.ReceiveID, ReceiveType: incoming.ReceiveType, Content: created.Content, Origin: created.Origin, CreatedAt: created.CreatedAt})
+	}
+	return s.DeliverEvent(wschat.ChatEvent{SenderID: created.SendID, ReceiveID: created.ReceiveID, ReceiveType: incoming.ReceiveType, Content: created.Content, Origin: created.Origin})
+}
+
+// DeliverEvent performs only process-local WebSocket delivery. Persistence is
+// done exactly once by the pod that accepted the sender's message.
+func (s *Server) DeliverEvent(event wschat.ChatEvent) error {
+	outgoing := wschat.Message{SendID: event.SenderID, ReceiveID: event.ReceiveID, Content: event.Content, Origin: event.Origin, ReceiveType: event.ReceiveType}
+	if event.ReceiveType == wschat.ReceiveTypeGroup {
+		group, err := gormservice.GetGroup(event.ReceiveID)
 		if err != nil {
 			return err
 		}
@@ -174,9 +184,8 @@ func (s *Server) HandleMessage(senderID string, incoming wschat.Message) error {
 		}
 		return nil
 	}
-	if !s.RouteTo(created.ReceiveID, outgoing) {
-		return gormservice.ErrDatabase
-	}
+	// Offline users are normal; history remains in MySQL for reconnects.
+	s.RouteTo(event.ReceiveID, outgoing)
 	return nil
 }
 

@@ -37,6 +37,7 @@ type KafkaConfig struct {
 	Topic          string   `toml:"topic"`
 	ConsumerGroup  string   `toml:"consumerGroup"`
 	PartitionCount int      `toml:"partitionCount"`
+	InstanceID     string   `toml:"-"`
 }
 
 type Config struct {
@@ -125,5 +126,8 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := os.Getenv("FABLE_KAFKA_CONSUMER_GROUP"); v != "" {
 		cfg.KafkaConfig.ConsumerGroup = v
+	}
+	if v := os.Getenv("FABLE_INSTANCE_ID"); v != "" {
+		cfg.KafkaConfig.InstanceID = v
 	}
 }
