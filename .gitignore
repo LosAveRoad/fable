@@ -22,3 +22,9 @@ bin/
 # 前端依赖
 **/node_modules/
 **/dist/
+
+# 编辑器与本地任务产物
+.vscode/
+art-*/
+load-artifact-*/
+serial-*/
