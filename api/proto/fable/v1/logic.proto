@@ -1,0 +1,150 @@
+syntax = "proto3";
+
+package fable.v1;
+
+import "fable/v1/common.proto";
+
+option go_package = "mychat/api/gen/fable/v1;fablev1";
+
+// Unary internal API. Caller roles, validation and deadlines: api/proto/README.md.
+// There is deliberately no public RPC to bypass business/AI authorization.
+service LogicService {
+  rpc RegisterComet(RegisterCometRequest) returns (RegisterCometResponse);
+  rpc RenewComet(RenewCometRequest) returns (RenewCometResponse);
+  rpc UnregisterComet(UnregisterCometRequest) returns (UnregisterCometResponse);
+  rpc Connect(ConnectRequest) returns (ConnectResponse);
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  rpc Disconnect(DisconnectRequest) returns (DisconnectResponse);
+  rpc SubmitMessage(SubmitMessageRequest) returns (SubmitMessageResponse);
+  rpc LookupRoutes(LookupRoutesRequest) returns (LookupRoutesResponse);
+  rpc ResolveComets(ResolveCometsRequest) returns (ResolveCometsResponse);
+}
+
+message RegisterCometRequest {
+  CometIdentity identity = 1;
+  // host:port, no URL/userinfo; must match the authenticated instance's policy.
+  string rpc_address = 2;
+  string request_id = 3;
+}
+
+message RegisterCometResponse {
+  CometLease lease = 1;
+}
+
+message RenewCometRequest {
+  CometIdentity identity = 1;
+  // false -> true is allowed. A draining boot cannot become active again.
+  bool draining = 2;
+  string request_id = 3;
+}
+
+message RenewCometResponse {
+  CometLease lease = 1;
+}
+
+message UnregisterCometRequest {
+  CometIdentity identity = 1;
+  string request_id = 2;
+}
+
+message UnregisterCometResponse {
+  ConditionalDeleteOutcome outcome = 1;
+}
+
+message ConnectRequest {
+  CometIdentity comet = 1;
+  string connection_id = 2;
+  // Fresh random capability generated for this connection, at least 128 bits.
+  string route_token = 3;
+  // Sensitive. Logic derives user_id and auth_expires_at, never trusts the caller.
+  string user_jwt = 4;
+  string request_id = 5;
+}
+
+message ConnectResponse {
+  RouteLease route = 1;
+  // Absent if no previous route existed; Logic owns best-effort Kick.
+  RouteLease replaced_route = 2;
+}
+
+message HeartbeatRequest {
+  ConnectionIdentity identity = 1;
+  string request_id = 2;
+}
+
+message HeartbeatResponse {
+  RouteLease route = 1;
+}
+
+message DisconnectRequest {
+  ConnectionIdentity identity = 1;
+  string request_id = 2;
+}
+
+message DisconnectResponse {
+  ConditionalDeleteOutcome outcome = 1;
+}
+
+message SubmitMessageRequest {
+  ConnectionIdentity identity = 1;
+  string client_message_id = 2;
+  Destination destination = 3;
+  string content = 4;
+  string request_id = 5;
+  // No sender_id/origin: identity fixes the sender; this method is user text only.
+}
+
+message SubmitMessageResponse {
+  SendResult result = 1;
+}
+
+message LookupRoutesRequest {
+  // 1..100 distinct user IDs. Results preserve request order and cardinality.
+  repeated string user_ids = 1;
+  string request_id = 2;
+}
+
+enum OfflineReason {
+  OFFLINE_REASON_UNSPECIFIED = 0;
+  OFFLINE_REASON_NO_ROUTE = 1;
+  OFFLINE_REASON_LEASE_EXPIRED = 2;
+  OFFLINE_REASON_INSTANCE_EXPIRED = 3;
+}
+
+message RouteLookupResult {
+  string user_id = 1;
+  // Exactly one is required. Dependency errors fail the RPC, never fake offline.
+  oneof state {
+    RouteLease route = 2;
+    OfflineReason offline = 3;
+  }
+}
+
+message LookupRoutesResponse {
+  repeated RouteLookupResult results = 1;
+}
+
+message ResolveCometsRequest {
+  // 1..100 distinct IDs. Results preserve request order and cardinality.
+  repeated string instance_ids = 1;
+  string request_id = 2;
+}
+
+enum MissingCometReason {
+  MISSING_COMET_REASON_UNSPECIFIED = 0;
+  MISSING_COMET_REASON_NOT_REGISTERED = 1;
+  MISSING_COMET_REASON_LEASE_EXPIRED = 2;
+}
+
+message CometResolution {
+  string instance_id = 1;
+  // Draining instances remain resolvable while their lease is valid.
+  oneof state {
+    CometLease lease = 2;
+    MissingCometReason missing = 3;
+  }
+}
+
+message ResolveCometsResponse {
+  repeated CometResolution results = 1;
+}

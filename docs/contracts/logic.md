@@ -1,6 +1,6 @@
 # Logic 角色契约
 
-状态：Draft，与[迁移设计](../design/goim-migration.md)一起评审；下列接口尚未实现。Owner 为仓库维护者，修改 Logic 接口的 PR 作者同步本文。实施后精确字段和枚举以 `api/proto/fable/v1/`、HTTP Schema 和契约测试为准，不把本文当生成代码。
+状态：架构已接受；接口已细化为可编译 spec，服务尚未实现。Owner 为仓库维护者，修改 Logic 接口的 PR 作者同步本文。方法与字段以 [logic.proto](../../api/proto/fable/v1/logic.proto) 和 [DTO / RPC spec](../../api/proto/README.md) 为准，本文只维护职责和调用语义。
 
 ## 职责与业务归属
 
@@ -19,13 +19,13 @@ Logic 是原业务后端的新运行角色：HTTP API、MCP、用户/会话/群/
 | `GET /api/v2/messages/sync` | 新增：JWT、conversation_id、可选 cursor、limit；返回消息页、next_cursor、has_more；MySQL 权威查询 |
 | `/healthz` / `/readyz` | 存活与分项依赖/服务就绪分开，不用旧常量 200 证明推送可用 |
 
-sync 的消息保留 UUID，并附 message_id、conversation_id 与用于同步排序的游标信息；调用者必须属于该会话，群权限取当前权威状态。游标绑定会话，不能换会话复用；无效游标返回 INVALID_ARGUMENT。普通用户同步不自动授予 AI；MCP 查询另走白名单。
+sync 的消息以 message_id 表示原消息 UUID，附 conversation_id 与用于排序的 position；调用者必须属于该会话，群权限取当前权威状态。游标绑定会话，不能换会话复用；无效游标返回 INVALID_ARGUMENT。普通用户同步不自动授予 AI；MCP 查询另走白名单。
 
 同步游标仅由成功读取并合并的 sync 页推进，不能按实时推送或 send_result 中最大的消息位置推进；详见设计中的客户端合并规则。MCP 发送继续保留原有去除首尾空白和最多 4000 字符限制。
 
 ## LogicService 内部 RPC
 
-所有方法需要服务凭据；JWT 只在需要用户身份的方法中额外验证。方法名称是提案，首次契约 PR 固定后采用增量兼容修改。
+所有方法需要按角色及实例授权的服务凭据；Connect 另外验证用户 JWT。方法与类型已在 Protobuf 固定，后续采用增量兼容修改；服务当前尚未实现。
 
 | 方法 | 调用方 | 输入 | 成功结果 / 副作用 | 重试语义 |
 | --- | --- | --- | --- | --- |
@@ -47,7 +47,7 @@ MCP 不经 Comet RPC：在同一 Logic 进程中完成 JWT/白名单校验后调
 
 ## SendResult 与错误
 
-SendResult 包含 client_message_id、stored、message_id、created_at、conversation_id、dispatch、replayed。stored 只有数据库提交后为 true；dispatch 的 queued/not_queued/unknown 只描述 Kafka 发布，不是对方接收。业务拒绝用明确错误返回；数据库提交后的推送失败以成功保存结果附 dispatch 降级，不能返回一条会诱导新 ID 重发的笼统数据库失败。
+SendResult 包含 client_message_id、stored、完整 message、dispatch、replayed；message 内保存 message_id、created_at、conversation_id 与 position，不重复维护顶层别名。stored 只有数据库提交后为 true；dispatch 的 queued/not_queued/unknown 只描述 Kafka 发布，不是对方接收。业务拒绝用明确错误返回；数据库提交后的推送失败以成功保存结果附 dispatch 降级，不能返回一条会诱导新 ID 重发的笼统数据库失败。
 
 | 错误 | 调用方行为 |
 | --- | --- |
@@ -69,4 +69,4 @@ RPC 初始 deadline 提案：路由/续租 2 秒、发送 10 秒；Kafka publish
 
 ## 逐块交付与验证
 
-普通单聊 P3、群消息 P4、MCP P5 分开修改并验证原规则；HTTP/RPC 装配 P6、路由 P7、Producer P9、同步 P11。每个 PR 说明具体调用方变化；新增必填字段先提供兼容服务端，再升级调用方，禁止一次移除旧方法。验收至少覆盖同 ID 并发、幂等冲突、越权、群成员竞争、MCP 白名单、路由失效与提交后发布失败。
+普通单聊、群消息和 MCP 可按业务块独立评审；RPC 装配、路由、Producer 与同步按实际依赖推进，不固定 PR 数量或编号。当前无生产数据，直接初始化新空库，不做旧行回填。每个 PR 说明调用方与协议变化；验收覆盖同 ID 并发、幂等冲突、越权、群成员竞争、MCP 白名单、路由失效与提交后发布失败。

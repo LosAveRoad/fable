@@ -1,6 +1,6 @@
 # Job 与 Kafka 推送契约
 
-状态：Draft，与[迁移设计](../design/goim-migration.md)一起评审；尚未实现。Owner 为仓库维护者，生产/消费任务的 PR 作者共同维护本文。Logic 是 Producer；Job 是 Consumer；Comet 不连接 Kafka。
+状态：架构已接受，DTO 与 RPC spec 已补齐；运行链路尚未实现。Owner 为仓库维护者，生产/消费任务的 PR 作者共同维护本文。Logic 是 Producer；Job 是 Consumer；Comet 不连接 Kafka。精确 JSON 结构以 [PushTask DTO](../../internal/dto/im/push.go) 与 [spec](../../api/proto/README.md) 为准。
 
 ## 角色接口
 
@@ -17,20 +17,20 @@ Job 没有用户业务 API，也没有持久化消息 RPC。它暴露本机 `/he
 | 生产确认 | RequireAll；单 Broker 开发环境不意味着副本容灾 |
 | Key | canonical conversation_id，单聊 `direct:<session_uuid>`，群聊 `group:<group_uuid>` |
 
-旧 `fable.chat.message` 仍是旧消费者处理的待落库命令，不能让 Job 接入。切换前清空旧链路，禁止往同一个 Topic 混写两种语义。
+旧 `fable.chat.message` 是旧消费者处理的待落库命令，不能让 Job 接入。新开发环境用独立 Topic/Group，不迁移旧开发 backlog，禁止混写两种语义。
 
 PushTaskV1 使用版本化 JSON，内部 RPC 使用 Protobuf；不复用旧 ChatEvent 来改变其含义。每条任务包含：
 
 | 字段 | 含义与约束 |
 | --- | --- |
 | schema_version、kind | 固定 `1`、`message_push`；未知版本不能按成功跳过 |
-| task_id、message_id | task_id=`push:v1:<message_id>:<chunk_index>`；重复发布保持不变 |
-| conversation_id、created_at、request_id | 会话标识、数据库消息时间、可选追踪 ID |
-| message | 已保存的 sender、receive_id/type、content、origin 与同步元数据；不能据此再创建消息 |
+| task_id | `push:v1:<message.message_id>:<chunk_index>`；重复发布保持不变 |
+| request_id | 可选追踪 ID，不用于幂等 |
+| message | 完整 Message：message_id、conversation_id、created_at、position、sender、目标、正文、来源；顶层不复制这些字段，不能再次存库 |
 | recipients | 该稳定分片的 user_id；必须包含离线用户，用于消费时重新查路由 |
 | targets | Logic 发布前查询到的 instance_id、connection_id、route_token 提示；无路由可为空 |
 | chunk_index、chunk_count | 收件人快照排序去重后，每 100 个一片；编号从 0 开始 |
-| pending_recipients | 仅 DLQ 重放可选：本次实际要处理的 recipients 子集；省略表示完整分片 |
+| pending_recipients、replay_run_id | 仅重放填写：非空未完成目标子集与重放标识；省略子集表示完整分片，显式 null/空数组非法 |
 
 单条任务上限 256 KiB，Logic 在落库前验证单消息内容可容纳；快照持久化后可还原同一分片。一次请求多片发布可能部分成功，SendResult 必须表达 unknown，不假装原子发布。相同 task_id 的消息业务内容和 recipients 不改变，targets 允许在重新发布时刷新；task_id 冲突但业务内容不同必须报警。
 
@@ -53,7 +53,7 @@ DLQ 与重放保留原 message 和完整 recipients，不修改 task_id 的业�
 
 ## DLQ 与人工重放
 
-死信包含 task_id、原 Topic/partition/offset、失败原因、未解决目标、首次/最后尝试时间及可重放的原消息。无法解析的任务保存原始字节及摘要并标记不可直接自动重放。日志只保留摘要，DLQ 自身包含业务正文，按敏感数据管理。
+有效任务的死信包含 task_id、原 Topic/partition/offset、失败原因、未解决目标、首次/最后尝试时间及完整原任务。解码失败、未知 Schema 或语义验证失败都保存原始字节 base64，不把未知字段丢弃后塞进当前 DTO，也不为非法收件人伪造 pending 子集；这类记录不可直接自动重放。日志只保留摘要，DLQ 自身包含业务正文，按敏感数据管理。
 
 `replay-dlq.sh` 显式选择 run_id、时间或 offset 范围，先预览数量，修复原因后再执行；只重发原推送语义，不调用 Logic SubmitMessage，不制造新的业务消息 ID。重放事件记录 replay_run_id 和来源，不自动删除原记录或重置整个 Consumer Group。重复重放可重复推送，客户端按 message_id 合并；旧 Socket 兼容期可能显示重复，不能把旧协议称为幂等交付。
 
@@ -61,4 +61,4 @@ DLQ 与重放保留原 message 和完整 recipients，不修改 task_id 的业�
 
 消费循环停止必须导致 not ready，并退出或被明确监督重启；不能复用当前只打一行日志的行为。监测 lag、每分区最后处理/提交时间、重试、offline、DLQ、commit 错误和各 Comet RPC 结果。没有消息时不能仅凭“很久没消费”判故障，需要区分空队列与循环死亡。
 
-P9/P10 分开评审 Producer 和 Consumer，但切流前必须通过真实 Kafka 的联调：任意 Job 接到任务仍能投到目标 Comet；Job 数量变化不影响连接；重放不写 MySQL；部分成功不误提交；坏消息/DLQ 故障可见。端到端已读与强保证在线交付不在此契约内。
+Producer 和 Consumer 可分别评审，不固定 PR 数量或编号；接入实际使用前必须通过真实 Kafka 的联调：任意 Job 接到任务仍能投到目标 Comet；Job 数量变化不影响连接；重放不写 MySQL；部分成功不误提交；坏消息/DLQ 故障可见。端到端已读与强保证在线交付不在此契约内。

@@ -1,6 +1,6 @@
 # Comet 角色契约
 
-状态：Draft，与[迁移设计](../design/goim-migration.md)一起评审；接口尚未实现。Owner 为仓库维护者，修改连接和投递行为的 PR 作者同步本文。精确 RPC Schema 将由 `api/proto/fable/v1/` 承载。
+状态：架构已接受；接口已细化为可编译 spec，服务尚未实现。Owner 为仓库维护者，修改连接和投递行为的 PR 作者同步本文。方法及字段以 [comet.proto](../../api/proto/fable/v1/comet.proto) 和 [DTO / RPC spec](../../api/proto/README.md) 为准。
 
 ## 职责与依赖
 
@@ -15,11 +15,11 @@ Comet 持有 WebSocket、本机连接表、读写协程和有界发送队列。�
 | 协议 | 输入 | 输出与兼容 |
 | --- | --- | --- |
 | legacy，默认 | 原 send_id、receive_id、content、receive_type | 保留原消息字段，额外元数据可忽略；不发送控制帧 |
-| `protocol=v2` | 同上，发送必须有 client_message_id | 消息帧带 `event=message` 与 message_id/conversation_id/cursor；另有 `event=send_result` 控制帧 |
+| `protocol=v2` | SendFrame：event、client_message_id、receive_id/type、content；sender 来自连接身份 | 嵌套 MessageFrame 与 SendResultFrame；Message 中为 message_id/conversation_id/position，result/error 恰有一个 |
 
-send_id 必须与已认证用户相同，OriginAI 不由用户指定。v2 发送结果按 client_message_id 关联到乐观气泡；持久化成功后使用 message_id 合并。控制帧字段为 Logic SendResult 或业务错误码；Comet 不把 RPC 失败转换成“未保存”的确定结论。
+legacy 的 send_id 必须与已认证用户相同；v2 不携带任意 send_id/origin。OriginAI 不由用户指定。v2 发送结果按 client_message_id 关联到乐观气泡；持久化成功后使用 message_id 合并。控制帧字段为 Logic SendResult 或业务错误码；Comet 不把 RPC 失败转换成“未保存”的确定结论。
 
-实时消息中的 cursor 只用于消息定位/排序；客户端同步水位只由成功合并的 HTTP sync 页推进，不能采用实时消息或发送确认里的最大值。
+实时消息中的 position 只用于消息定位/排序；客户端同步水位只由成功合并的 HTTP sync 页推进，不能采用实时消息或发送确认里的最大值。
 
 legacy 每次接收时生成一次 ID；跨帧或跨连接自动重试没有幂等保证。v2 断线后以同一 ID 在新有效连接上重试；服务器对未知 protocol 版本明确拒绝，不静默降级。
 
@@ -27,11 +27,11 @@ legacy 每次接收时生成一次 ID；跨帧或跨连接自动重试没有幂�
 
 | 方法 | 调用方 | 输入 | 输出 / 副作用 | 重试与权限 |
 | --- | --- | --- | --- | --- |
-| Deliver | Job | task_id、message_id、MessageView、最多 100 个连接目标 | 每个目标单独返回结果，不用一个 bool 表示整批成功 | Job 凭据；重复调用可能重复入队，客户端按 message_id 去重 |
-| Kick | Logic | user_id、connection_id、route_token、reason | 仅匹配本机当前连接时关闭；不存在为幂等结果 | Logic 凭据；不得只按 user_id 误关新连接 |
+| Deliver | Job | 本机 CometIdentity、task_id、MessageView、最多 100 个完整连接目标 | 每个目标单独返回结果，不用一个 bool 表示整批成功 | Job 凭据；重复调用可能重复入队，客户端按 message_id 去重 |
+| Kick | Logic | 本机 CometIdentity、目标 ConnectionIdentity、非零 reason | 仅匹配本机当前连接时关闭；不存在为幂等结果 | Logic 凭据；不得只按 user_id 误关新连接 |
 | Drain | 本机管理入口 | 本机授权与截止时间 | 停止接新连接，登记 draining，排空或关闭已有连接 | 不暴露公网；重复调用不恢复为 active |
 
-Deliver 目标包含 user_id、connection_id、route_token。RPC 必须定向访问具体 instance_id 的地址；服务端验证目标属于自己的 boot_id。不匹配时返回 stale，不得按 user_id 找到另一条连接就发送。
+Deliver 目标包含 user_id、instance_id、connection_id、route_token；响应按请求顺序逐项回显完整目标与结果。RPC 必须定向访问具体 instance_id 的地址；请求的 CometIdentity 与本机 boot 不匹配时，整次 RPC 返回 FAILED_PRECONDITION 并要求 REFRESH_ROUTE，不触碰 Hub。只有实例身份正确而某个目标连接/令牌不匹配时，才返回该目标的 STALE；不得按 user_id 找到另一条连接就发送。
 
 | 每目标结果 | 含义 | Job 后续行为 |
 | --- | --- | --- |
@@ -39,7 +39,7 @@ Deliver 目标包含 user_id、connection_id、route_token。RPC 必须定向访
 | DUPLICATE | 有界近期去重命中，之前已经入队 | 与 ENQUEUED 相同；不能解释为客户端已收 |
 | NOT_FOUND / STALE | 本机不存在该连接或令牌不匹配 | 通过 Logic 查询最新路由；依赖错误不当 offline |
 | QUEUE_FULL | 慢连接队列已满，开始关闭连接 | 有界重试/路由修复，超限 DLQ |
-| DRAINING | 截止前不能接收本批投递 | 由 Job 按退避策略处理 |
+| DRAINING | 排空截止时间已到，不能接收本批投递；截止前允许投递已有 active 连接 | 由 Job 按退避策略处理 |
 
 RPC 完成前通过带有结果回传的 Hub 命令确认实际连接检查/入队结果；不能继续沿用“仅 routeQueue 入队就返回 true”的含义。请求取消后不得无限等待 Hub。初始投递 deadline 为 2 秒；队列容量初始沿用现有 256，可配置。
 
@@ -53,4 +53,4 @@ RPC 完成前通过带有结果回传的 Hub 命令确认实际连接检查/入�
 
 ## 交付与验证
 
-P8 先交付独立 Comet 与内部契约测试，不切正式 WS；P10/P12 才与 Kafka、脚本联调。验证重复 Kick、旧 Disconnect 不删新路由、pending 阶段投递、客户端取消、慢连接、JWT 到期、租约丢失、Drain 和旧协议。前端 v2/补拉在 P11 单独交付，Comet 不承担客户端消息历史缓存。
+独立 Comet、Kafka 联调与前端协议适配可以按可验证边界拆分，不固定 PR 编号；只有对端就绪且测试通过才能接入实际链路。验证重复 Kick、旧 Disconnect 不删新路由、pending 阶段投递、客户端取消、慢连接、JWT 到期、租约丢失、Drain 和 legacy 协议。Comet 不承担客户端消息历史缓存。

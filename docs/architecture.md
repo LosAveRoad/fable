@@ -16,7 +16,7 @@ Fable 将 HTTP 业务接口、WebSocket 连接和 MCP 工具放在同一个 Go �
 
 本文集中说明现状、约束和待决问题。字段、路由和配置清单链接到源码；未实现功能不会因为出现在文档中而成为已交付能力。
 
-Logic / Comet / Job 的目标架构与迁移步骤在[迁移设计（Draft）](design/goim-migration.md)中评审；它尚未实施，不替代本文对当前代码的说明。
+Logic / Comet / Job 的目标架构与迁移步骤见[已接受的迁移设计](design/goim-migration.md)，DTO / RPC 的接口细化见 [Spec](../api/proto/README.md)。服务尚未实施，不替代本文对当前运行代码的说明。
 
 ## 目标与范围
 
