@@ -2,6 +2,8 @@
 
 状态：架构已接受，DTO 与 RPC spec 已补齐；运行链路尚未实现。Owner 为仓库维护者，生产/消费任务的 PR 作者共同维护本文。Logic 是 Producer；Job 是 Consumer；Comet 不连接 Kafka。精确 JSON 结构以 [PushTask DTO](../../internal/dto/im/push.go) 与 [spec](../../api/proto/README.md) 为准。
 
+本文长期保留，作为写 Job 代码前的消费、投递与恢复参考。任务字段以 DTO、RPC 方法与局部语义以 `.proto`/注释为准；消费流程、提交边界和重试行为变化时同步本文，不为纯字段变化复制另一份清单。
+
 ## 角色接口
 
 Job 没有用户业务 API，也没有持久化消息 RPC。它暴露本机 `/healthz`、`/readyz` 和指标，消费 PushTaskV1，调用 [Logic](logic.md) 的 LookupRoutes/ResolveComets 与 [Comet](comet.md) 的 Deliver。单次 DLQ 重放使用 Job 的命令行模式，不增加第四个常驻服务。

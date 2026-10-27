@@ -2,6 +2,8 @@
 
 状态：架构已接受；接口已细化为可编译 spec，服务尚未实现。Owner 为仓库维护者，修改 Logic 接口的 PR 作者同步本文。方法与字段以 [logic.proto](../../api/proto/fable/v1/logic.proto) 和 [DTO / RPC spec](../../api/proto/README.md) 为准，本文只维护职责和调用语义。
 
+本文长期保留，作为写 Logic 代码前的参考。HTTP 以路由、Handler、DTO 和代码接口注释生成文档，具体见 [code-first 维护规则](../../api/proto/README.md)；不在本文重复维护字段表。纯字段变化更新代码/生成物，职责、授权边界或协作流程变化才同步本文。
+
 ## 职责与业务归属
 
 Logic 是原业务后端的新运行角色：HTTP API、MCP、用户/会话/群/联系人规则、AI 授权、消息持久化、Redis 路由和 Kafka 生产。它不持有 WebSocket，也不消费推送 Topic。

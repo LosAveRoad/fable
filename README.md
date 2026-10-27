@@ -10,7 +10,8 @@ Fable 是参考 KamaChat 业务组织方式的 Go 聊天学习项目，包含用
 | --- | --- |
 | 理解系统、数据流、设计取舍与已知缺口 | [总架构](docs/architecture.md) |
 | 理解已接受的 goim 三角色设计、角色接口与交付依赖 | [迁移设计（已接受，服务未实施）](docs/design/goim-migration.md) |
-| 查看 DTO / gRPC 字段、错误与协议检查 | [接口 Spec](api/proto/README.md) |
+| 写模块前核对职责与协作 | [Logic](docs/contracts/logic.md)、[Comet](docs/contracts/comet.md)、[Job](docs/contracts/job.md) 角色契约（长期保留） |
+| 查看 RPC/DTO spec 与 HTTP code-first 维护规则 | [接口契约与文档维护](api/proto/README.md) |
 | 准备测试依赖并运行测试 | [测试环境](docs/test-environment.md) |
 | 理解部署样例、初始化前提与发布方式 | [部署说明](deploy/k8s/README.md) |
 | 配置部署密钥 | [密钥说明](deploy/secrets/README.md) |

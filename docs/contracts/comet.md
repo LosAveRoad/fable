@@ -2,6 +2,8 @@
 
 状态：架构已接受；接口已细化为可编译 spec，服务尚未实现。Owner 为仓库维护者，修改连接和投递行为的 PR 作者同步本文。方法及字段以 [comet.proto](../../api/proto/fable/v1/comet.proto) 和 [DTO / RPC spec](../../api/proto/README.md) 为准。
 
+本文长期保留，作为写 Comet 代码前的连接生命周期与协作参考；不因 `.proto` 存在而删除。RPC 字段及局部语义维护在 `.proto`/注释，职责或连接行为变化时同步本文。
+
 ## 职责与依赖
 
 Comet 持有 WebSocket、本机连接表、读写协程和有界发送队列。它调用 [Logic](logic.md) 的注册、连接、续租、发送方法，暴露定向投递和关闭连接方法。它不初始化 MySQL、Redis 或 Kafka，不含会话/群/MCP 业务逻辑。

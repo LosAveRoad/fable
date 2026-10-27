@@ -1,4 +1,4 @@
-# Fable IM DTO 与 gRPC Spec
+# Fable 接口契约与文档维护
 
 状态：已接受三角色架构的接口细化，2026-10-28；本轮只定义契约，服务、适配器和验证器尚未实现。架构与交付依赖见[总设计](../../docs/design/goim-migration.md)，各角色的职责见 [Logic](../../docs/contracts/logic.md)、[Comet](../../docs/contracts/comet.md)、[Job](../../docs/contracts/job.md)。
 
@@ -10,8 +10,28 @@
 | LogicService | [logic.proto](fable/v1/logic.proto) | 9 个 unary RPC，连接管理、发送和寻址 |
 | CometService | [comet.proto](fable/v1/comet.proto) | 3 个 unary RPC，Deliver、Kick、Drain |
 | JSON / Redis DTO | [internal/dto/im](../../internal/dto/im) | v2 WS、同步页、Kafka、内部租约的 Go 类型声明 |
+| 当前 HTTP 接口 | [路由](../../internal/https_server/https_server.go)、[Handler](../../internal/api/v1)、[请求](../../internal/dto/request)/[响应 DTO](../../internal/dto/response) | code-first 的维护源；生成工具尚未接入 |
 
 RPC 实施后直接使用生成的 `mychat/api/gen/fable/v1` 类型，不再手写第二份 RPC request/response。当前没有提交生成代码、gRPC runtime 依赖、服务监听或业务实现。JSON DTO 使用 `encoding/json`，不是 ProtoJSON；不能直接把生成类型 JSON 输出当公开协议。转换与边界验证由后续相应实现 PR 完成。
+
+三个角色契约长期保留，作为实施前的职责和协作参考；它们不承担逐字段 Schema 的另一份维护。RPC spec 维护在 `.proto` 和就近注释中；角色边界、调用目的、业务前置条件或跨角色流程变化时才同步角色文档。HTTP 维护按以下 code-first 规则进行。
+
+## HTTP：code-first
+
+HTTP 文档从实际路由注册、Handler、请求/响应 DTO、校验标签和代码中的接口注释生成，不以手写 Markdown 或 YAML 作为另一份接口定义。生成工具不能凭 Go 类型推断鉴权、条件校验和全部错误分支；这些语义在 Handler 附近显式记录，并由契约测试核对。代码及受测行为为事实来源，生成结果用于阅读和评审。
+
+每次 HTTP 变更在同一个 PR 完成：
+
+1. 修改实际路由、Handler 与 DTO；字段/格式/必填校验随代码维护，记录路径、方法、参数位置、鉴权、成功和错误响应。
+2. 使用固定版本的工具和统一命令重新生成 HTTP 文档；目标生成物可放在 `api/openapi/http.json`，不能直接手工修改。工具接入时明确 OpenAPI/Swagger 的实际版本，不把两者混称为已支持的格式。
+3. 验证真实路由的 method/path 与生成文档覆盖一致；校验请求、响应与状态码，包含认证/授权失败。生成用的路由注释不能独立于真实注册漂移。
+4. CI 重新生成并比较提交产物，发现差异即失败；同时运行路由/响应契约测试。字段变化不要求另改角色 Markdown，角色职责或语义约束变化才改对应文档。
+
+保留现有公开 HTTP 行为，不为了生成文档而统一或改写历史返回格式。例如当前 `/message/getMessageList` 返回消息数组，错误返回 `{"error":"..."}`；生成文档必须如实表达，不能假设所有接口都包在 `data` 中。需要显式响应类型来支持生成时，只描述既有 wire shape，不借此改变业务响应。
+
+角色契约可以提出待实现的 HTTP 能力，但生成文档只发布已注册实现的接口，不能把设计中的同步接口当已交付。WebSocket 帧和 MCP tools 各有自己的协议/Schema，不把它们的全部消息结构塞进 REST 文档。
+
+**当前状态：** 仓库已有 Gin 路由、Handler、DTO 和测试；HTTP 生成工具、生成产物、路由覆盖检查及 CI 漂移门禁尚未接入。`scripts/check-contracts.sh` 只检查 RPC spec/Go DTO 编译，不能作为 HTTP 文档一致性的证明。先完成这个维护闭环，再随各业务块持续更新，不写固定 PR 编号。
 
 ## 公共值与存储结构
 
