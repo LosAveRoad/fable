@@ -1,6 +1,6 @@
 # Fable 接口契约与文档维护
 
-状态：已接受三角色架构的接口细化，2026-10-28；本轮只定义契约，服务、适配器和验证器尚未实现。架构与交付依赖见[总设计](../../docs/design/goim-migration.md)，各角色的职责见 [Logic](../../docs/contracts/logic.md)、[Comet](../../docs/contracts/comet.md)、[Job](../../docs/contracts/job.md)。
+状态：已接受三角色架构的接口细化，2026-10-28；Comet 投递端的实现进度见[角色契约](../../docs/contracts/comet.md)，其他未交付能力不因出现在 spec 中成为可用服务。架构与交付依赖见[总设计](../../docs/design/goim-migration.md)，各角色的职责见 [Logic](../../docs/contracts/logic.md)、[Comet](../../docs/contracts/comet.md)、[Job](../../docs/contracts/job.md)。
 
 ## 权威来源与边界
 
@@ -12,7 +12,7 @@
 | JSON / Redis DTO | [internal/dto/im](../../internal/dto/im) | v2 WS、同步页、Kafka、内部租约的 Go 类型声明 |
 | 当前 HTTP 接口 | [路由](../../internal/https_server/https_server.go)、[Handler](../../internal/api/v1)、[请求](../../internal/dto/request)/[响应 DTO](../../internal/dto/response) | code-first 的维护源；生成工具尚未接入 |
 
-RPC 实施后直接使用生成的 `mychat/api/gen/fable/v1` 类型，不再手写第二份 RPC request/response。当前没有提交生成代码、gRPC runtime 依赖、服务监听或业务实现。JSON DTO 使用 `encoding/json`，不是 ProtoJSON；不能直接把生成类型 JSON 输出当公开协议。转换与边界验证由后续相应实现 PR 完成。
+RPC 直接使用生成的 [mychat/api/gen/fable/v1](../gen/fable/v1) 类型，不再手写第二份 RPC request/response。已提交生成代码及 Comet 投递所需的 gRPC runtime；尚无独立服务监听入口，Logic/Job 未实现。JSON DTO 使用 `encoding/json`，不是 ProtoJSON；Comet 写出端显式转换，其他适配由相应实现交付。
 
 三个角色契约长期保留，作为实施前的职责和协作参考；它们不承担逐字段 Schema 的另一份维护。RPC spec 维护在 `.proto` 和就近注释中；角色边界、调用目的、业务前置条件或跨角色流程变化时才同步角色文档。HTTP 维护按以下 code-first 规则进行。
 
@@ -152,7 +152,17 @@ DLQRecord 的 task 与 raw_payload_base64 恰有一个：只有通过版本/结�
 sh scripts/check-contracts.sh
 ```
 
-该命令把 descriptor 写到临时目录并清理，再编译 Go DTO 包；不生成仓库代码、不连接数据库或 Kafka，不证明运行时验证器或服务可用。当前核对使用 protoc 33.4。以后引入 Go 生成器时须固定插件版本并记录生成命令；禁止用 fmt/JSON 作为 Protobuf 二进制序列化的替代。
+该命令把 descriptor 写到临时目录并清理，再编译 Go DTO 包；不生成仓库代码、不连接数据库或 Kafka，不证明运行时验证器或服务可用。当前核对使用 protoc 33.4。Go 生成器的固定版本与命令见下；禁止用 fmt/JSON 作为 Protobuf 二进制序列化的替代。
+
+Go 绑定由固定版本生成：protoc 33.4、protoc-gen-go v1.36.12、protoc-gen-go-grpc v1.6.2。运行时 grpc-go v1.85.0；依赖以 go.mod/go.sum 为准。
+
+```sh
+sh scripts/generate-proto.sh
+sh scripts/generate-proto.sh --check
+go test -race ./internal/comet
+```
+
+生成脚本在临时目录安装固定插件；`--check` 只比较生成物，不改检出。脚本必须有对应 Go 模块的下载权限；生成绑定和通过测试不等于已有真实 Logic、租约或多实例部署。
 
 实现者以本 spec 的语义建立边界用例：缺少/未知枚举、超长正文、64 位 JSON 位置、过期 JWT/租约、旧 boot、重复批量输入、部分投递、同 ID 不同正文、权限撤销后的重试、无详情超时、空 pending 与越权重放目标、同步游标被实时消息跳过。PR 按实际能力拆分，不固定数量或编号。
 
