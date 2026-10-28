@@ -1,0 +1,80 @@
+syntax = "proto3";
+
+package fable.v1;
+
+import "fable/v1/common.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "mychat/api/gen/fable/v1;fablev1";
+
+service CometService {
+  rpc Deliver(DeliverRequest) returns (DeliverResponse);
+  rpc Kick(KickRequest) returns (KickResponse);
+  // Local administrative credential only, never a public user method.
+  rpc Drain(DrainRequest) returns (DrainResponse);
+}
+
+message DeliverRequest {
+  // The receiver validates instance_id AND boot_id before touching the Hub.
+  CometIdentity comet = 1;
+  string task_id = 2;
+  MessageView message = 3;
+  // 1..100 distinct identities, all addressed to this Comet.
+  repeated ConnectionIdentity targets = 4;
+  string request_id = 5;
+}
+
+enum DeliveryOutcome {
+  DELIVERY_OUTCOME_UNSPECIFIED = 0;
+  DELIVERY_OUTCOME_ENQUEUED = 1;
+  DELIVERY_OUTCOME_DUPLICATE = 2;
+  DELIVERY_OUTCOME_NOT_FOUND = 3;
+  DELIVERY_OUTCOME_STALE = 4;
+  DELIVERY_OUTCOME_QUEUE_FULL = 5;
+  DELIVERY_OUTCOME_DRAINING = 6;
+}
+
+message DeliveryResult {
+  // Echo the exact target, not just user_id; correlate results per connection.
+  ConnectionIdentity target = 1;
+  DeliveryOutcome outcome = 2;
+}
+
+message DeliverResponse {
+  string task_id = 1;
+  string message_id = 2;
+  // Same order/count as targets. Partial failure is an OK RPC with these results.
+  repeated DeliveryResult results = 3;
+}
+
+enum KickReason {
+  KICK_REASON_UNSPECIFIED = 0;
+  KICK_REASON_REPLACED = 1;
+  KICK_REASON_AUTH_EXPIRED = 2;
+  KICK_REASON_SHUTDOWN = 3;
+}
+
+message KickRequest {
+  CometIdentity comet = 1;
+  ConnectionIdentity target = 2;
+  KickReason reason = 3;
+  string request_id = 4;
+}
+
+message KickResponse {
+  // DELETED means local close was initiated, not that peer observed the close.
+  ConditionalDeleteOutcome outcome = 1;
+}
+
+message DrainRequest {
+  CometIdentity comet = 1;
+  google.protobuf.Timestamp deadline = 2;
+  string request_id = 3;
+}
+
+message DrainResponse {
+  // Return immediately after accepting drain. Repetition cannot extend deadline.
+  google.protobuf.Timestamp deadline = 1;
+  bool already_draining = 2;
+  uint64 active_connections = 3;
+}

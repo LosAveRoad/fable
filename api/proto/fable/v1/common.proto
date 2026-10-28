@@ -1,0 +1,132 @@
+syntax = "proto3";
+
+package fable.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "mychat/api/gen/fable/v1;fablev1";
+
+// Zero is never a valid business value. Do not cast legacy JSON integers.
+enum ReceiveType {
+  RECEIVE_TYPE_UNSPECIFIED = 0;
+  RECEIVE_TYPE_USER = 1;
+  RECEIVE_TYPE_GROUP = 2;
+}
+
+enum MessageType {
+  MESSAGE_TYPE_UNSPECIFIED = 0;
+  MESSAGE_TYPE_TEXT = 1;
+}
+
+enum MessageOrigin {
+  MESSAGE_ORIGIN_UNSPECIFIED = 0;
+  MESSAGE_ORIGIN_USER = 1;
+  MESSAGE_ORIGIN_AI = 2;
+}
+
+enum DispatchState {
+  DISPATCH_STATE_UNSPECIFIED = 0;
+  DISPATCH_STATE_QUEUED = 1;
+  DISPATCH_STATE_NOT_QUEUED = 2;
+  DISPATCH_STATE_UNKNOWN = 3;
+}
+
+message CometIdentity {
+  string instance_id = 1;
+  string boot_id = 2;
+}
+
+// Internal only. A route token is not a user JWT and must not reach public DTOs.
+message ConnectionIdentity {
+  string user_id = 1;
+  string instance_id = 2;
+  string connection_id = 3;
+  string route_token = 4;
+}
+
+message RouteLease {
+  ConnectionIdentity identity = 1;
+  google.protobuf.Timestamp auth_expires_at = 2;
+  google.protobuf.Timestamp lease_deadline = 3;
+}
+
+message CometLease {
+  CometIdentity identity = 1;
+  string rpc_address = 2;
+  bool draining = 3;
+  google.protobuf.Timestamp lease_deadline = 4;
+}
+
+message Destination {
+  ReceiveType receive_type = 1;
+  string receive_id = 2;
+}
+
+// Immutable persisted data, not a command to create another database message.
+message MessageView {
+  string message_id = 1;
+  string conversation_id = 2;
+  // Direct: session UUID (S...). Group: group UUID (G...), not a member session.
+  string session_id = 3;
+  string sender_id = 4;
+  Destination destination = 5;
+  MessageType message_type = 6;
+  string content = 7;
+  MessageOrigin origin = 8;
+  google.protobuf.Timestamp created_at = 9;
+  // Positive MySQL row ID, <= int64 max. Never advances a client's sync cursor.
+  uint64 position = 10;
+}
+
+message SendResult {
+  string client_message_id = 1;
+  // Always true in a successful response. Failure uses gRPC status.
+  bool stored = 2;
+  MessageView message = 3;
+  DispatchState dispatch = 4;
+  bool replayed = 5;
+}
+
+enum ConditionalDeleteOutcome {
+  CONDITIONAL_DELETE_OUTCOME_UNSPECIFIED = 0;
+  CONDITIONAL_DELETE_OUTCOME_DELETED = 1;
+  CONDITIONAL_DELETE_OUTCOME_NOT_CURRENT = 2;
+  CONDITIONAL_DELETE_OUTCOME_NOT_FOUND = 3;
+}
+
+enum ErrorReason {
+  ERROR_REASON_UNSPECIFIED = 0;
+  ERROR_REASON_INVALID_ARGUMENT = 1;
+  ERROR_REASON_IDEMPOTENCY_CONFLICT = 2;
+  ERROR_REASON_UNAUTHENTICATED = 3;
+  ERROR_REASON_PERMISSION_DENIED = 4;
+  ERROR_REASON_SUPERSEDED = 5;
+  ERROR_REASON_LEASE_EXPIRED = 6;
+  ERROR_REASON_INSTANCE_NOT_REGISTERED = 7;
+  ERROR_REASON_DEPENDENCY_UNAVAILABLE = 8;
+  ERROR_REASON_RESOURCE_EXHAUSTED = 9;
+  ERROR_REASON_DRAINING = 10;
+}
+
+enum RetryDirective {
+  RETRY_DIRECTIVE_UNSPECIFIED = 0;
+  RETRY_DIRECTIVE_DO_NOT_RETRY = 1;
+  RETRY_DIRECTIVE_SAME_REQUEST = 2;
+  RETRY_DIRECTIVE_RECONNECT = 3;
+  RETRY_DIRECTIVE_REAUTHENTICATE = 4;
+  RETRY_DIRECTIVE_REFRESH_ROUTE = 5;
+}
+
+message FieldViolation {
+  string field = 1;
+  string description = 2;
+}
+
+// Attach to a non-OK gRPC status using status details; no success/error envelope.
+// A transport-generated error may have no detail: never assume it is present.
+message ErrorDetail {
+  ErrorReason reason = 1;
+  RetryDirective retry = 2;
+  string request_id = 3;
+  repeated FieldViolation violations = 4;
+}
