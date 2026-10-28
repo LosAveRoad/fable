@@ -11,7 +11,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -76,7 +75,7 @@ func (s *RPCService) checkIdentity(id *pb.CometIdentity, requestID string) error
 	if !validRequestID(requestID) || validateComet(id) != nil {
 		return rpcError(codes.InvalidArgument, pb.ErrorReason_ERROR_REASON_INVALID_ARGUMENT, pb.RetryDirective_RETRY_DIRECTIVE_DO_NOT_RETRY, "")
 	}
-	if !proto.Equal(id, s.hub.identity) {
+	if !sameComet(id, s.hub.identity) {
 		return rpcError(codes.FailedPrecondition, pb.ErrorReason_ERROR_REASON_INSTANCE_NOT_REGISTERED, pb.RetryDirective_RETRY_DIRECTIVE_REFRESH_ROUTE, requestID)
 	}
 	return nil

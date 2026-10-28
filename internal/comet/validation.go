@@ -1,6 +1,7 @@
 package comet
 
 import (
+	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
 	"math"
@@ -40,10 +41,20 @@ func validateConnection(id *pb.ConnectionIdentity, instance string) error {
 		return invalid("connection identity")
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(id.RouteToken)
-	if err != nil || len(raw) < 16 {
+	if err != nil || len(raw) < 16 || base64.RawURLEncoding.EncodeToString(raw) != id.RouteToken {
 		return invalid("route_token")
 	}
 	return nil
+}
+
+// Unknown protobuf fields are extensions, not part of the identity fence.
+func sameComet(a, b *pb.CometIdentity) bool {
+	return a != nil && b != nil && a.InstanceId == b.InstanceId && a.BootId == b.BootId
+}
+
+func sameConnection(a, b *pb.ConnectionIdentity) bool {
+	return a != nil && b != nil && a.UserId == b.UserId && a.InstanceId == b.InstanceId &&
+		a.ConnectionId == b.ConnectionId && subtle.ConstantTimeCompare([]byte(a.RouteToken), []byte(b.RouteToken)) == 1
 }
 
 func validateMessage(m *pb.MessageView) error {

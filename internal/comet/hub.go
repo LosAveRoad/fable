@@ -157,7 +157,7 @@ func (h *Hub) Register(ctx context.Context, id *pb.ConnectionIdentity) (*Connect
 			return nil, ErrDraining
 		}
 		if old := s.clients[id.UserId]; old != nil {
-			if proto.Equal(old.identity, id) {
+			if sameConnection(old.identity, id) {
 				return old, nil
 			}
 			old.close()
@@ -178,7 +178,7 @@ func (h *Hub) Unregister(ctx context.Context, id *pb.ConnectionIdentity) (pb.Con
 		if c == nil {
 			return pb.ConditionalDeleteOutcome_CONDITIONAL_DELETE_OUTCOME_NOT_FOUND, nil
 		}
-		if !proto.Equal(c.identity, id) {
+		if !sameConnection(c.identity, id) {
 			return pb.ConditionalDeleteOutcome_CONDITIONAL_DELETE_OUTCOME_NOT_CURRENT, nil
 		}
 		delete(s.clients, id.UserId)
@@ -205,7 +205,7 @@ func (h *Hub) Deliver(ctx context.Context, taskID string, message *pb.MessageVie
 			case s.draining && !time.Now().Before(s.deadline):
 				outcome = pb.DeliveryOutcome_DELIVERY_OUTCOME_DRAINING
 			case c == nil:
-			case !proto.Equal(c.identity, id):
+			case !sameConnection(c.identity, id):
 				outcome = pb.DeliveryOutcome_DELIVERY_OUTCOME_STALE
 			default:
 				select {

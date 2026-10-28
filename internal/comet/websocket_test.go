@@ -5,9 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -172,5 +175,105 @@ func TestReplacementClosesOldWriterWithoutRemovingNewConnection(t *testing.T) {
 	}
 	if deliver(t, h, newID)[0].Outcome != pb.DeliveryOutcome_DELIVERY_OUTCOME_ENQUEUED {
 		t.Fatal("old writer unregistered new connection")
+	}
+}
+
+// Preserve the real HTTP upgrade, then block at net.Conn.Write to make slow
+// transport cancellation deterministic without depending on OS buffer sizes.
+type blockedWriteConn struct {
+	net.Conn
+	blocking  atomic.Bool
+	entered   chan struct{}
+	released  chan struct{}
+	enterOnce sync.Once
+	closeOnce sync.Once
+}
+
+func (c *blockedWriteConn) Write(b []byte) (int, error) {
+	if c.blocking.Load() {
+		c.enterOnce.Do(func() { close(c.entered) })
+		<-c.released
+		return 0, net.ErrClosed
+	}
+	return c.Conn.Write(b)
+}
+
+func (c *blockedWriteConn) Close() error {
+	c.closeOnce.Do(func() { close(c.released) })
+	return c.Conn.Close()
+}
+
+type blockingListener struct{ net.Listener }
+
+func (l blockingListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	return &blockedWriteConn{Conn: c, entered: make(chan struct{}), released: make(chan struct{})}, nil
+}
+
+func TestBlockedSocketWriteCanBeInterrupted(t *testing.T) {
+	for _, action := range []string{"cancel", "kick", "drain", "hub-close"} {
+		t.Run(action, func(t *testing.T) {
+			h := testHub(t, 2)
+			c := register(t, h, testTarget("1"))
+			accepted := make(chan *websocket.Conn, 1)
+			server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				peer, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
+				if err == nil {
+					accepted <- peer
+				}
+			}))
+			server.Listener = blockingListener{server.Listener}
+			server.Start()
+			defer server.Close()
+			client, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer client.Close()
+			var peer *websocket.Conn
+			select {
+			case peer = <-accepted:
+			case <-time.After(3 * time.Second):
+				t.Fatal("upgrade timed out")
+			}
+			defer peer.Close()
+			transport := peer.UnderlyingConn().(*blockedWriteConn)
+			transport.blocking.Store(true)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { done <- c.WriteTo(ctx, peer, ProtocolV2) }()
+			deliver(t, h, testTarget("1"))
+			select {
+			case <-transport.entered:
+			case <-time.After(3 * time.Second):
+				t.Fatal("write never blocked")
+			}
+			switch action {
+			case "cancel":
+				cancel()
+			case "kick":
+				_, err = h.Unregister(context.Background(), testTarget("1"))
+			case "drain":
+				_, err = h.Drain(context.Background(), time.Now().Add(20*time.Millisecond))
+			case "hub-close":
+				h.Close()
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = waitWriter(t, done)
+			if action == "cancel" {
+				if !errors.Is(err, context.Canceled) {
+					t.Fatal(err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			waitClosed(t, c)
+		})
 	}
 }

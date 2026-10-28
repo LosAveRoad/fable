@@ -110,6 +110,24 @@ func TestRPCBootFenceReturnsDetailsBeforeAnyEnqueue(t *testing.T) {
 	}
 }
 
+func TestRPCIgnoresUnknownIdentityFields(t *testing.T) {
+	h := testHub(t, 1)
+	c := register(t, h, testTarget("1"))
+	client := rpcClient(t, h)
+	req := deliveryRequest()
+	req.Comet.ProtoReflect().SetUnknown([]byte{0x98, 0x06, 0x01})
+	req.Targets[0].ProtoReflect().SetUnknown([]byte{0x98, 0x06, 0x01})
+	r, err := client.Deliver(rpcContext(t, testCredentials().JobToken), req)
+	if err != nil || r.Results[0].Outcome != pb.DeliveryOutcome_DELIVERY_OUTCOME_ENQUEUED {
+		t.Fatalf("unknown identity extension rejected: %v %v", r, err)
+	}
+	kick, err := client.Kick(rpcContext(t, testCredentials().LogicToken), &pb.KickRequest{Comet: req.Comet, Target: req.Targets[0], Reason: pb.KickReason_KICK_REASON_REPLACED})
+	if err != nil || kick.Outcome != pb.ConditionalDeleteOutcome_CONDITIONAL_DELETE_OUTCOME_DELETED {
+		t.Fatalf("extended kick = %v %v", kick, err)
+	}
+	waitClosed(t, c)
+}
+
 func TestRPCReportsOrderedPartialResultsAndKickIsExact(t *testing.T) {
 	h := testHub(t, 2)
 	c := register(t, h, testTarget("1"))

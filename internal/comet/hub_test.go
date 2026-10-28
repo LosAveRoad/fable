@@ -111,6 +111,35 @@ func TestRepeatedRegistrationKeepsSameActiveConnection(t *testing.T) {
 	}
 }
 
+func TestUnknownFieldsAreNotPartOfConnectionIdentity(t *testing.T) {
+	h := testHub(t, 2)
+	original := register(t, h, testTarget("1"))
+	extended := testTarget("1")
+	extended.ProtoReflect().SetUnknown([]byte{0x98, 0x06, 0x01})
+	repeated := register(t, h, extended)
+	if repeated != original {
+		t.Fatal("unknown extension replaced the same connection")
+	}
+	if deliver(t, h, extended)[0].Outcome != pb.DeliveryOutcome_DELIVERY_OUTCOME_ENQUEUED {
+		t.Fatal("unknown extension fenced a valid target")
+	}
+	result, err := h.Unregister(context.Background(), extended)
+	if err != nil || result != pb.ConditionalDeleteOutcome_CONDITIONAL_DELETE_OUTCOME_DELETED {
+		t.Fatalf("extended unregister = %v, %v", result, err)
+	}
+}
+
+func TestRegisterRejectsNoncanonicalRouteToken(t *testing.T) {
+	for _, token := range []string{"MDEyMzQ1Njc4OWFiY2RlZg\n", "MDEyMzQ1Njc4OWFiY2RlZh"} {
+		h := testHub(t, 1)
+		id := testTarget("1")
+		id.RouteToken = token
+		if _, err := h.Register(context.Background(), id); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("noncanonical token accepted: %v", err)
+		}
+	}
+}
+
 func TestDeliveryReportsEachTargetAndClosesOnlySlowConnection(t *testing.T) {
 	h := testHub(t, 1)
 	slow := register(t, h, testTarget("1"))
