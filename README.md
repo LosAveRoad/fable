@@ -4,7 +4,7 @@ Fable 是参考 KamaChat 业务组织方式的 Go 聊天学习项目，包含用
 
 **当前状态：** 单实例聊天与 MCP 链路已有实现和测试；Redis 用于缓存。Kafka 模式、Docker Compose 和 K8s 双副本清单已经存在，但跨实例消息路由、消息确认与重放幂等尚未完成，不能据此宣称可靠分布式聊天或高可用。
 
-三角色迁移已交付独立的 [Comet 投递内核](internal/comet)，包含本地连接、WebSocket 写出和 RPC 适配；尚未接入现有入口与真实 Logic，当前启动方式不变。
+三角色迁移已交付独立的 [Comet 投递内核](internal/comet)，包含本地连接、WebSocket 写出、RPC 适配和 Logic 实例租约客户端；尚未接入现有入口与真实 Logic，当前启动方式不变。
 
 ## 文档入口
 
