@@ -81,11 +81,20 @@ func (p *Processor) round(ctx context.Context, task im.PushTask, states []*recip
 			repair(batch)
 			continue
 		}
+		batch = eligible(batch, lease)
+		if len(batch) == 0 {
+			continue
+		}
 		rpcCtx, cancel := p.rpcContext(ctx)
 		client, err := p.dial(rpcCtx, lease.RpcAddress)
 		if err != nil || client == nil {
 			cancel()
 			mark(batch, DependencyFailure)
+			continue
+		}
+		batch = eligible(batch, lease)
+		if len(batch) == 0 || rpcCtx.Err() != nil {
+			cancel()
 			continue
 		}
 		targets := make([]*pb.ConnectionIdentity, 0, len(batch))
@@ -138,6 +147,7 @@ func (p *Processor) lookup(ctx context.Context, requestID string, states []*reci
 		item := r.Results[i]
 		if route := item.GetRoute(); route != nil {
 			s.route = route.Identity
+			s.routeDeadline = route.LeaseDeadline.AsTime()
 			s.repair = false
 		} else {
 			s.Outcome = Offline
@@ -157,9 +167,29 @@ func repair(states []*recipient) {
 func repairWithReason(states []*recipient, reason Reason) {
 	for _, s := range states {
 		s.route = nil
+		s.routeDeadline = time.Time{}
 		s.repair = true
 		s.Reason = reason
 	}
+}
+
+// Resolution, earlier batches and dialing can consume lease time. Recheck at
+// dispatch, but never revoke a confirmed result merely for in-flight expiry.
+func eligible(states []*recipient, lease *pb.CometLease) []*recipient {
+	if !future(lease.LeaseDeadline) {
+		repair(states)
+		return nil
+	}
+	now := time.Now()
+	batch := make([]*recipient, 0, len(states))
+	for _, s := range states {
+		if !s.routeDeadline.IsZero() && !now.Before(s.routeDeadline) {
+			repair([]*recipient{s})
+			continue
+		}
+		batch = append(batch, s)
+	}
+	return batch
 }
 
 func rpcFailure(states []*recipient, err error, refresh bool) {

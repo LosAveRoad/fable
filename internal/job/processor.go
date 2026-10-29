@@ -121,9 +121,12 @@ func NewProcessor(logic RouteClient, dial CometDialer, jobToken string, options 
 
 type recipient struct {
 	RecipientResult
-	route   *pb.ConnectionIdentity
-	repair  bool
-	stopped bool
+	route *pb.ConnectionIdentity
+	// Zero for hints (which carry no deadlines); otherwise the known Logic
+	// route deadline, already validated not to exceed authentication expiry.
+	routeDeadline time.Time
+	repair        bool
+	stopped       bool
 }
 
 // Process never commits an offset or writes DLQ. Even a nil error only means

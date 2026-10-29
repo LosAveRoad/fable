@@ -28,7 +28,7 @@ func invalidTask(field string) error { return fmt.Errorf("%w: %s", ErrInvalidTas
 // must retain the ORIGINAL bytes on error, never re-marshal the returned value.
 func DecodeTask(raw []byte) (im.PushTask, error) {
 	var task im.PushTask
-	if len(raw) > 256*1024 || !utf8.Valid(raw) {
+	if len(raw) > 256*1024 || !utf8.Valid(raw) || !validUnicodeEscapes(raw) {
 		return task, invalidTask("encoding or size")
 	}
 	d := json.NewDecoder(bytes.NewReader(raw))
@@ -92,6 +92,46 @@ func DecodeTask(raw []byte) (im.PushTask, error) {
 		seen[id] = true
 	}
 	return task, nil
+}
+
+// encoding/json replaces lone UTF-16 surrogate escapes with U+FFFD. Reject
+// those before decoding so a saved task's body cannot silently change. Literal
+// or escaped U+FFFD and properly paired surrogate escapes remain valid.
+func validUnicodeEscapes(raw []byte) bool {
+	for i := 0; i < len(raw); i++ {
+		if raw[i] != '\\' {
+			continue
+		}
+		i++
+		if i >= len(raw) {
+			return false
+		}
+		if raw[i] != 'u' {
+			continue
+		}
+		if i+4 >= len(raw) {
+			return false
+		}
+		n, err := strconv.ParseUint(string(raw[i+1:i+5]), 16, 16)
+		if err != nil {
+			return false
+		}
+		i += 4
+		if n >= 0xdc00 && n <= 0xdfff {
+			return false
+		}
+		if n >= 0xd800 && n <= 0xdbff {
+			if i+6 >= len(raw) || raw[i+1] != '\\' || raw[i+2] != 'u' {
+				return false
+			}
+			low, err := strconv.ParseUint(string(raw[i+3:i+7]), 16, 16)
+			if err != nil || low < 0xdc00 || low > 0xdfff {
+				return false
+			}
+			i += 6
+		}
+	}
+	return true
 }
 
 func requiredObject(raw []byte, keys ...string) (map[string]json.RawMessage, bool) {
