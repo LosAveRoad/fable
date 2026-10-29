@@ -6,6 +6,8 @@ Fable 是参考 KamaChat 业务组织方式的 Go 聊天学习项目，包含用
 
 三角色迁移已交付独立的 [Comet 投递内核](internal/comet)，包含本地连接、WebSocket 写出和 RPC 适配；尚未接入现有入口与真实 Logic，当前启动方式不变。
 
+[Job 单任务投递内核](internal/job) 已实现任务校验、Logic 路由解析、Comet 定向 RPC 和有界重试；Kafka 消费、offset 提交、DLQ 写入与独立进程尚未接入。
+
 ## 文档入口
 
 | 任务 | 入口 |

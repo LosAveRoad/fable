@@ -20,6 +20,8 @@ Logic / Comet / Job 的目标架构与迁移步骤见[已接受的迁移设计](
 
 迁移的首个实现位于 [internal/comet](../internal/comet)：本地连接投递、WebSocket 写端和认证后的 Deliver/Kick/Drain RPC 适配，可通过真实 Socket 与内存 gRPC 测试验证。它尚未接入当前入口，也没有真实 Logic 注册/续租、独立 Comet 进程或 Job 消费者；下文描述的业务运行链路保持不变。
 
+[internal/job](../internal/job) 提供单任务推送内核，通过 Logic RPC 解析路由并定向调用 Comet；用两个真实 Comet RPC 服务测试部分结果、路由修复和有界重试。Logic 仅有隔离测试替身，尚无真实 Kafka 消费循环、offset 提交、DLQ 写入或独立 Job 入口，不构成可运行的三角色链路。
+
 ## 目标与范围
 
 当前系统服务于文本单聊、已有群聊业务和用户授权的 MCP 操作。本文帮助维护者定位业务边界、追踪一条消息，并判断修改会影响哪些数据与失败场景。
