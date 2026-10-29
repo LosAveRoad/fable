@@ -1,8 +1,18 @@
 # Comet 角色契约
 
-状态：架构已接受；接口已细化为可编译 spec，服务尚未实现。Owner 为仓库维护者，修改连接和投递行为的 PR 作者同步本文。方法及字段以 [comet.proto](../../api/proto/fable/v1/comet.proto) 和 [DTO / RPC spec](../../api/proto/README.md) 为准。
+状态：架构已接受；本地投递内核、WebSocket 写出和 gRPC 适配已实现，尚未接入独立进程与真实 Logic。Owner 为仓库维护者，修改连接和投递行为的 PR 作者同步本文。方法及字段以 [comet.proto](../../api/proto/fable/v1/comet.proto) 和 [DTO / RPC spec](../../api/proto/README.md) 为准。
 
 本文长期保留，作为写 Comet 代码前的连接生命周期与协作参考；不因 `.proto` 存在而删除。RPC 字段及局部语义维护在 `.proto`/注释，职责或连接行为变化时同步本文。
+
+## 当前交付边界
+
+[internal/comet](../../internal/comet) 提供单所有者 Hub、有界连接队列和精确身份注销。`Register` 是进程内接入边界，要求调用方先完成真实身份/路由注册；重复注册相同身份返回同一连接对象。`Deliver` 返回逐目标入队结果，慢连接队列满则关闭；不提供接收持久 ACK 或持久去重，客户端仍须按 message_id 合并。
+
+`Connection.WriteTo` 独占一个 WebSocket 写端，支持 legacy 与 v2 消息输出、取消和连接关闭；读取、鉴权、发送确认、Logic 注册/续租与 JWT 到期处理尚未接入。它不是可公开访问的 `/wss` Handler，不接受测试替身充当真实授权。
+
+`NewRPCService` 在每个方法内部检查独立凭据：Job 只能 Deliver、Logic 只能 Kick、Admin 只能 Drain；空、短或相同凭据拒绝创建服务。角色不能通过省略 interceptor 绕过认证。请求还必须匹配本机 instance/boot。当前没有新增监听端口，部署入口后续提供受控网络与 TLS 配置。
+
+`Drain` 立即停止新注册，允许截止前继续投递，最迟 30 秒内关闭已有连接，重复调用不能延长截止时间。旧 `chatservice` 与当前业务入口保持原实现；本轮没有独立 Comet、Logic 或 Job 可执行程序，也不能据此宣称三角色聊天已经可运行。
 
 ## 职责与依赖
 
