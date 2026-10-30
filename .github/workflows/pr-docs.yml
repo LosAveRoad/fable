@@ -1,0 +1,24 @@
+name: PR documentation impact
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  docs-impact:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check validator behavior
+        run: node --test .github/scripts/check-docs.test.cjs
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner, repo: context.repo.repo,
+              pull_number: context.issue.number, per_page: 100
+            });
+            require('./.github/scripts/check-docs.cjs').check(
+              context.payload.pull_request.body, files.map(file => file.filename)
+            );
