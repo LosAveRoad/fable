@@ -1,6 +1,6 @@
 # Logic 角色契约
 
-状态：架构已接受；消息事务持久化与权威同步组件已实现，独立服务尚待装配。Owner 为仓库维护者，修改 Logic 接口的 PR 作者同步本文。方法与字段以 [logic.proto](../../api/proto/fable/v1/logic.proto) 和 [DTO / RPC spec](../../api/proto/README.md) 为准，本文只维护职责和调用语义。
+状态：架构已接受；消息持久化、权威同步、Redis 路由和 Kafka Producer 组件已实现，独立服务尚待装配。Owner 为仓库维护者，修改 Logic 接口的 PR 作者同步本文。方法与字段以 [logic.proto](../../api/proto/fable/v1/logic.proto) 和 [DTO / RPC spec](../../api/proto/README.md) 为准，本文只维护职责和调用语义。
 
 本文长期保留，作为写 Logic 代码前的参考。HTTP 以路由、Handler、DTO 和代码接口注释生成文档，具体见 [code-first 维护规则](../../api/proto/README.md)；不在本文重复维护字段表。纯字段变化更新代码/生成物，职责、授权边界或协作流程变化才同步本文。
 
@@ -9,6 +9,12 @@
 `internal/logic/messagestore` 在同一事务内保存消息、幂等指纹与收件人快照；先锁发送用户，再锁单聊会话或群，并在返回重复记录前重新校验当前成员/AI 白名单。相同 sender/client_message_id 跨目标或内容冲突被拒绝，普通文本保留空白，AI 发送维持 TrimSpace/4000 字符边界。群消息 session_id 保持 G UUID。Sync 绕过缓存，以整数位置分页并逐次鉴权，JSON 位置为十进制字符串。
 
 该组件直接初始化新空库模型，旧 model 和单体写法保持不变；部署入口必须拒绝对已有表执行初始化，不做生产回填。真实 MySQL 用例验证并发重复只存一条、跨目标冲突、成员/白名单竞争、事务回滚、分页和大整数位置。该组件本身不发送 Kafka，也不开放 RPC 入口。
+
+## 路由和生产组件
+
+`internal/logic/routing` 以 Redis Lua 和服务器时间原子管理实例及用户路由，默认 TTL 60 秒，用户租约受 JWT 截止约束；四元组和内部 boot 共同隔离旧进程。draining 不可恢复为 active；旧续租/删除不能影响新路由。Lookup/Resolve 保留请求顺序与数量，依赖/损坏数据返回错误而不是假离线。命名空间隔离，原子相关 Key 使用同一 hash tag；当前只验收单 Redis，未声明集群部署完成。
+
+`internal/logic/kafkapush` 同步 RequireAll 发布新 `fable.push.v1` 任务，使用会话 Key、明确 Topic 和最多 256 KiB 的原始 JSON。它不创建 Topic、不消费、不写消息数据库；写出前拒绝为 definitely-not-published，写出后的错误按结果不确定处理，不能由异常推断接收成功。Ping 检查显式 Topic 元数据，关闭会等待有界 writer 清理。真实 Redis 和 Kafka 用例验证竞争、期限、损坏数据、同 Key 分区、精确载荷和禁止自动建 Topic。
 
 ## 职责与业务归属
 
