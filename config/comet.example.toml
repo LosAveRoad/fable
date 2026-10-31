@@ -1,0 +1,9 @@
+# Local loopback only. Provision process identity, boot UUID, credentials and
+# origins through FABLE_COMET_* / FABLE_JWT_SECRET. No secret defaults.
+[comet]
+httpAddress = "127.0.0.1:8082"
+rpcAddress = "127.0.0.1:9092"
+logicAddress = "127.0.0.1:9091"
+queueSize = 256
+# allowedOrigins = ["http://localhost:5173"]
+# instanceID / bootID must match Logic's grant for this process start.

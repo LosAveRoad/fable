@@ -23,6 +23,8 @@ var (
 type Connection struct {
 	identity *pb.ConnectionIdentity
 	outbound chan *pb.MessageView
+	controls chan socketControl
+	pending  bool
 	done     chan struct{}
 	hub      *Hub
 	writer   atomic.Bool
@@ -151,6 +153,9 @@ func call[T any](ctx context.Context, h *Hub, op func(*hubState) (T, error)) (T,
 // Register accepts a connection already authenticated/registered by its owner.
 // It is an in-process boundary, not an authentication or public upgrade API.
 func (h *Hub) Register(ctx context.Context, id *pb.ConnectionIdentity) (*Connection, error) {
+	return h.register(ctx, id, false)
+}
+func (h *Hub) register(ctx context.Context, id *pb.ConnectionIdentity, pending bool) (*Connection, error) {
 	if err := validateConnection(id, h.identity.InstanceId); err != nil {
 		return nil, err
 	}
@@ -165,7 +170,7 @@ func (h *Hub) Register(ctx context.Context, id *pb.ConnectionIdentity) (*Connect
 			}
 			old.close()
 		}
-		c := &Connection{identity: id, outbound: make(chan *pb.MessageView, h.queueSize), done: make(chan struct{}), hub: h}
+		c := &Connection{identity: id, outbound: make(chan *pb.MessageView, h.queueSize), done: make(chan struct{}), hub: h, controls: make(chan socketControl, h.queueSize), pending: pending}
 		s.clients[id.UserId] = c
 		return c, nil
 	})
@@ -207,7 +212,7 @@ func (h *Hub) Deliver(ctx context.Context, taskID string, message *pb.MessageVie
 			switch {
 			case s.draining && !time.Now().Before(s.deadline):
 				outcome = pb.DeliveryOutcome_DELIVERY_OUTCOME_DRAINING
-			case c == nil:
+			case c == nil || c.pending:
 			case !sameConnection(c.identity, id):
 				outcome = pb.DeliveryOutcome_DELIVERY_OUTCOME_STALE
 			default:
@@ -253,3 +258,17 @@ func (h *Hub) Drain(ctx context.Context, deadline time.Time) (DrainState, error)
 }
 
 func (h *Hub) Close() { h.once.Do(func() { close(h.done) }); <-h.stopped }
+
+func (h *Hub) activate(ctx context.Context, c *Connection) error {
+	_, err := call(ctx, h, func(s *hubState) (bool, error) {
+		if s.draining {
+			return false, ErrDraining
+		}
+		if s.clients[c.identity.UserId] != c {
+			return false, ErrClosed
+		}
+		c.pending = false
+		return true, nil
+	})
+	return err
+}
