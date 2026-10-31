@@ -1,0 +1,11 @@
+# Supply FABLE_JOB_TOKEN at startup: the same Job role grant configured in
+# Logic and Comet, distinct from Comet identity and administrative grants.
+[job]
+httpAddress = "127.0.0.1:18082"
+logicAddress = "127.0.0.1:19001"
+group = "fable-push-job-v1"
+dlqTopic = "fable.push.dlq.v1"
+
+[kafka]
+brokers = ["127.0.0.1:9092"]
+topic = "fable.push.v1"
