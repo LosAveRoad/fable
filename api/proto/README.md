@@ -12,7 +12,7 @@
 | JSON / Redis DTO | [internal/dto/im](../../internal/dto/im) | v2 WS、同步页、Kafka、内部租约的 Go 类型声明 |
 | 当前 HTTP 接口 | [路由](../../internal/https_server/https_server.go)、[Handler](../../internal/api/v1)、[请求](../../internal/dto/request)/[响应 DTO](../../internal/dto/response) | code-first 的维护源；路由同源生成与漂移检查已接入 |
 
-RPC 直接使用生成的 [mychat/api/gen/fable/v1](../gen/fable/v1) 类型，不再手写第二份 RPC request/response。已提交生成代码及 gRPC runtime；Logic 九个 RPC 及独立入口已实现，Comet 投递与实例租约客户端已实现，Job 消费运行入口仍待接入。JSON DTO 使用 `encoding/json`，不是 ProtoJSON；Comet 写出端显式转换，其他适配由相应实现交付。
+RPC 直接使用生成的 [mychat/api/gen/fable/v1](../gen/fable/v1) 类型，不再手写第二份 RPC request/response。已提交生成代码及 gRPC runtime；Logic 九个 RPC 及独立入口、Comet 投递与实例租约客户端、Job 单任务投递内核均已实现，Comet 公开接入和 Job 消费运行入口仍待接入。JSON DTO 使用 `encoding/json`，不是 ProtoJSON；Comet 写出端和 Job 投递端显式转换，其他适配由相应实现交付。
 
 三个角色契约长期保留，作为实施前的职责和协作参考；它们不承担逐字段 Schema 的另一份维护。RPC spec 维护在 `.proto` 和就近注释中；角色边界、调用目的、业务前置条件或跨角色流程变化时才同步角色文档。HTTP 维护按以下 code-first 规则进行。
 

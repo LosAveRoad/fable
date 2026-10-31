@@ -56,7 +56,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\test.ps1
 
 ## CI 与结果边界
 
-[CI](../.github/workflows/ci.yml) 配置 MySQL 8.4、Redis 7.4、Kafka 3.9 和 Go 工具链，执行格式与 HTTP 生成物检查、全量单测、旧单体集成回归、Comet race 测试及新 Logic 真实后端 race 测试。它不代表完整三角色公开 WebSocket 链路或 K8s 故障验收；容量测试另见[压测说明](../tests/load/README.md)，需保存实际运行证据。
+[CI](../.github/workflows/ci.yml) 配置 MySQL 8.4、Redis 7.4、Kafka 3.9 和 Go 工具链，执行格式与 HTTP 生成物检查、全量单测、旧单体集成回归、Comet/Job race 测试及新 Logic 真实后端 race 测试。它不代表完整三角色公开 WebSocket 链路或 K8s 故障验收；容量测试另见[压测说明](../tests/load/README.md)，需保存实际运行证据。
 
 ## Logic 独立服务验证
 

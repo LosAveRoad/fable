@@ -1,8 +1,20 @@
 # Job 与 Kafka 推送契约
 
-状态：架构已接受，DTO 与 RPC spec 已补齐；运行链路尚未实现。Owner 为仓库维护者，生产/消费任务的 PR 作者共同维护本文。Logic 是 Producer；Job 是 Consumer；Comet 不连接 Kafka。精确 JSON 结构以 [PushTask DTO](../../internal/dto/im/push.go) 与 [spec](../../api/proto/README.md) 为准。
+状态：架构已接受；单任务投递内核已实现，Kafka 消费运行链路尚未接入。Owner 为仓库维护者，生产/消费任务的 PR 作者共同维护本文。Logic 是 Producer；Job 是 Consumer；Comet 不连接 Kafka。精确 JSON 结构以 [PushTask DTO](../../internal/dto/im/push.go) 与 [spec](../../api/proto/README.md) 为准。
 
 本文长期保留，作为写 Job 代码前的消费、投递与恢复参考。任务字段以 DTO、RPC 方法与局部语义以 `.proto`/注释为准；消费流程、提交边界和重试行为变化时同步本文，不为纯字段变化复制另一份清单。
+
+## 当前交付边界
+
+[internal/job](../../internal/job) 的 `DecodeTask` 校验原始 JSON；拒绝重复/大小写歧义字段、未知字段、未配对 Unicode 转义、非法版本、消息、收件人、路由提示及重放上下文。失败只返回安全的错误类别；后续消费者必须保存原始字节，不能把无效任务重新编码成当前 DTO 后写 DLQ。普通任务可用 hints，重放任务只处理 pending 子集且重新查路由。
+
+`NewProcessor` 接受 Logic 查询客户端、Comet 客户端选择器和 Job 角色凭据。`Process(ctx, raw)` 只处理一条任务：有序校验 Logic 的路由/实例租约，按实例解析地址并调用 Comet，保留已入队、去重和明确离线的终结结果。已知租约在投递前及客户端选择后重新检查，过期目标进入有界修复/pending；不因 RPC 在途过期而丢弃已确认入队结果。响应缺项、错序、非法 oneof/枚举或过期租约不能冒充成功或离线；身份比较忽略未知 Protobuf 扩展。错误描述不透传上游地址、身份、令牌或正文。
+
+默认最多 3 轮，共用 10 秒预算；每次 RPC（含客户端选择）最多 2 秒，轮间退避 200 ms、1 s。`Options` 可缩短预算和退避，不能延长默认上限。初次无提示时的路由查询不算修复；遇到失效实例、旧 boot、stale 连接或不确定投递时，整个任务周期最多追加一批路由修复，之后仍不确定的目标保留 pending。明确 SAME_REQUEST 的错误可按原路由有界重试；权限、认证及 DO_NOT_RETRY 错误停止对应目标。实例批次先顺序处理，所有 RPC 和等待均受任务/调用方截止时间限制。
+
+`Result` 保留完整任务及本次处理范围内的有序逐用户结果，`PendingRecipients()` 给出未终结子集；`Attempts` 计入查询/解析失败的任务轮次。存在 pending 时返回 `ErrUnresolved`，取消/截止同时保留 context 错误和已知进展。nil error 只说明全部本次目标已终结，不等于客户端收到，也不执行 offset 提交。
+
+当前未实现 Kafka Fetch/Commit、DLQ 写入/重放命令、跨任务冲突检测/报警、管理端点或独立 Job 进程；不接入旧命令 Topic、不访问数据库。RPC 客户端的连接池、关闭和传输安全由调用方负责；选择器必须遵守 context，不从任务接收地址。Job 内核测试使用真实 gRPC 与两个真实 Comet 内核，并以测试服务器隔离 Logic 依赖；真实 Logic 服务已在独立入口实现，但尚未通过 Job 消费入口接通完整聊天链路。
 
 ## 角色接口
 

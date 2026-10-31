@@ -84,7 +84,7 @@ jobs:
       - name: Check formatting
         shell: bash
         run: |
-          files=$(git ls-files "internal/integration/*.go" "internal/service/chatservice/*.go" "internal/comet/*.go" "internal/logic/*.go" "internal/logic/**/*.go" "internal/httpdocs/*.go" "internal/https_server/*.go" "internal/mcpserver/*.go" "internal/mcpserver/**/*.go" "cmd/logic/*.go" "cmd/httpdocs/*.go" "api/gen/**/*.go" | xargs gofmt -l)
+          files=$(git ls-files "internal/integration/*.go" "internal/service/chatservice/*.go" "internal/comet/*.go" "internal/job/*.go" "internal/logic/*.go" "internal/logic/**/*.go" "internal/httpdocs/*.go" "internal/https_server/*.go" "internal/mcpserver/*.go" "internal/mcpserver/**/*.go" "cmd/logic/*.go" "cmd/httpdocs/*.go" "api/gen/**/*.go" | xargs gofmt -l)
           if [ -n "$files" ]; then
             echo "These files are not formatted:"
             echo "$files"
@@ -97,8 +97,8 @@ jobs:
       - name: Run unit tests
         run: go test ./...
 
-      - name: Check Comet concurrency
-        run: go test -race ./internal/comet
+      - name: Check Comet and Job concurrency
+        run: go test -race ./internal/comet ./internal/job
 
       - name: Run integration tests
         run: go test -tags=integration -count=1 -v ./internal/integration

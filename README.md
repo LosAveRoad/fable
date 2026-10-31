@@ -8,6 +8,8 @@ Fable 是参考 KamaChat 业务组织方式的 Go 聊天学习项目，包含用
 
 独立 [Logic 服务](cmd/logic) 已实现现有 HTTP/MCP、九个授权 RPC、事务消息持久化/幂等、Redis 路由、Kafka 生产和权威同步；使用独立新空库与 [Logic 配置](config/logic.example.toml)。原单体作为隔离回归入口保留。Comet 的公开用户接入和 Job 消费运行链路仍待接通，不代表新三角色聊天已可部署。HTTP code-first 文档与 PR 文档影响检查已接入。
 
+[Job 单任务投递内核](internal/job) 已实现任务校验、Logic 路由解析、Comet 定向 RPC 和有界重试；Kafka 消费、offset 提交、DLQ 写入与独立进程尚未接入。
+
 ## 文档入口
 
 | 任务 | 入口 |
