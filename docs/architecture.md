@@ -2,13 +2,25 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 文档状态 | 当前实现说明；演进建议单独标注，尚未批准或实现 |
+| 文档状态 | 新 Logic 交付说明与旧单体回归参照；目标设计已接受，三角色迁移进行中 |
 | 维护者 | 仓库维护者；修改相关链路的 PR 作者负责同步本文 |
 | 读者 | 开发者、评审者和部署维护者 |
-| 核对基线 | [2d85cdb](https://github.com/LosAveRoad/fable/commit/2d85cdbf1f229deb4fa17518ff7a1c419a08a893)，2026-10-26 静态核对 |
-| 验证边界 | 本次文档整理没有执行线上、跨实例或故障注入验收 |
+| 核对基线 | 旧单体说明基于 [2d85cdb](https://github.com/LosAveRoad/fable/commit/2d85cdbf1f229deb4fa17518ff7a1c419a08a893)；新 Logic 以本轮实现和测试为准 |
+| 验证边界 | 隔离真实后端与 Logic/Comet 组件联调；未验收完整公开 WS 三角色链路、线上容量或 K8s |
 
-## 概要
+## 当前 Logic 交付
+
+新入口 `cmd/logic` 独立提供 HTTP/MCP 与 LogicService，不持有 WebSocket、不消费 Kafka。用户/会话/群/联系人接口沿用原 Handler，MCP 发送和 Comet SubmitMessage 统一经过 Logic 编排：权威授权→MySQL 事务/幂等/稳定收件人快照→Kafka 推送任务。消息提交后发布失败保留 stored=true 和降级 dispatch；同步直接查询数据库，以客户端同 ID 重试和历史补拉修复首期双写窗口。
+
+Redis 路由由 Logic 的 Lua 原子管理，显式角色凭据绑定 Comet instance/boot/address。真实 Comet 实例客户端可注册/续租/条件注销，用户路由注册/续租、查找及替换后的 Kick 已通过跨组件测试。新服务正常启动只校验目标 schema；初始化只允许独立空库。现有旧查询缓存在新 Logic 中关闭，旧单体环境仍可保留原缓存实现。
+
+HTTP 业务接口与元数据同源生成 OpenAPI 3.1，CI 比较生成物并运行路由/响应契约测试；PR 模板和 Action 检查文档影响声明。职责及语义继续参考 Logic/Comet/Job 契约，RPC 字段仍以 .proto 为准。
+
+当前验证覆盖真实 MySQL、Redis、Kafka、Logic RPC 与两个 Comet，以及真实 HTTP/MCP。测试中的编排 Publisher 捕获与实际 Kafka adapter 验证分别记录。尚无 Comet 公开用户 WS 接入、完整 Job 消费/offset/DLQ、v2 前端或新拓扑部署脚本，不能据此宣称完整端到端聊天迁移完成。
+
+下文保留旧单体的运行路径与问题作为隔离回归参照；它不描述新 Logic 入口。
+
+## 旧单体概要
 
 Fable 将 HTTP 业务接口、WebSocket 连接和 MCP 工具放在同一个 Go 进程中。MySQL 保存业务数据，Redis 缓存查询结果；每个进程单独维护本机 WebSocket 连接表。AI 由 Codex 等外部 MCP 客户端承载，Fable 提供授权后的聊天工具。
 
@@ -18,15 +30,13 @@ Fable 将 HTTP 业务接口、WebSocket 连接和 MCP 工具放在同一个 Go �
 
 Logic / Comet / Job 的目标架构与迁移步骤见[已接受的迁移设计](design/goim-migration.md)，DTO / RPC 的接口细化见 [Spec](../api/proto/README.md)。目标设计不替代本文对当前运行代码的说明。
 
-迁移的首个实现位于 [internal/comet](../internal/comet)：本地连接投递、WebSocket 写端和认证后的 Deliver/Kick/Drain RPC 适配，可通过真实 Socket 与内存 gRPC 测试验证。它尚未接入当前入口，也没有真实 Logic 注册/续租、独立 Comet 进程或 Job 消费者；下文描述的业务运行链路保持不变。
-
-Comet 已增加向 Logic 注册/续租/条件注销实例的客户端，租约失效关闭本机 Hub，并同步 draining；用户连接租约、公开 WS 接入与独立进程尚待实施。当前没有真实 Logic 服务可用于启动新拓扑。
+迁移组件 [internal/comet](../internal/comet) 包含投递内核及实例租约客户端，已与新 Logic 验证注册/续租/条件注销和替换连接的 Kick。公开 WS、用户连接读写生命周期与独立 Comet 进程仍待实施；旧入口继续使用下文的单体运行路径。
 
 ## 目标与范围
 
 当前系统服务于文本单聊、已有群聊业务和用户授权的 MCP 操作。本文帮助维护者定位业务边界、追踪一条消息，并判断修改会影响哪些数据与失败场景。
 
-本次整理仅修改文档，不修复可靠性或部署问题，不增加 PR/Action 门禁，也不提供新的生产架构承诺。内置 LLM/Agent Runtime、群聊 AI 任务、待办工具和 WebRTC 通话均没有在当前代码中形成实现闭环。
+以下旧单体分析保留其问题边界，不把旧部署样例视作新架构交付。内置 LLM/Agent Runtime、群聊 AI 任务、待办工具和 WebRTC 通话均没有在当前代码中形成实现闭环。
 
 ## 组件与职责
 

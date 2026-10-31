@@ -9,7 +9,9 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func New() *mcp.Server {
+func New() *mcp.Server { return NewWithSend(nil) }
+
+func NewWithSend(send tools.SendBackend) *mcp.Server {
 	server := mcp.NewServer(
 		&mcp.Implementation{Name: "fable-im", Version: "v0.1.0"},
 		&mcp.ServerOptions{
@@ -17,7 +19,7 @@ func New() *mcp.Server {
 			Capabilities: &mcp.ServerCapabilities{},
 		},
 	)
-	tools.Register(server)
+	tools.RegisterWithSend(server, send)
 	return server
 }
 

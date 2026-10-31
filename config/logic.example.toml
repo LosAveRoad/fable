@@ -1,0 +1,40 @@
+# Standalone Logic. Create/select this fresh database explicitly before init:
+# go run ./cmd/logic -config config/logic.example.toml init-schema
+# go run ./cmd/logic -config config/logic.example.toml serve
+# Serving never creates/migrates tables. init-schema refuses any existing table.
+# HTTP and RPC listeners must be loopback for this development deployment.
+# Leases default to 60 seconds. No legacy Kafka consumer or WebSocket listener.
+# Set FABLE_MYSQL_PASSWORD, FABLE_JWT_SECRET (>=32 bytes),
+# FABLE_LOGIC_JOB_TOKEN and FABLE_LOGIC_KICK_TOKEN (distinct >=32 ASCII chars).
+# Grants are env-only FABLE_LOGIC_COMET_GRANTS_JSON. JSON structure:
+# [{"identity":{"instance_id":"comet-dev","boot_id":"<actual Comet boot UUID>"},
+#   "rpc_address":"127.0.0.1:9092","token":"<distinct Comet service token>"}]
+# Tokens and grant identities must match the actual configured Comet instance.
+# Optional Logic env: FABLE_LOGIC_HTTP_ADDR, FABLE_LOGIC_RPC_ADDR,
+# FABLE_LOGIC_REDIS_PREFIX. Existing FABLE_MYSQL_*, FABLE_REDIS_*,
+# FABLE_KAFKA_*, FABLE_JWT_SECRET overrides apply to their base sections.
+# Kafka's fable.push.v1 topic must already exist. Missing Redis/Kafka degrades
+# /readyz (503) while /healthz stays 200 and database-backed HTTP can run.
+
+[mysqlConfig]
+host = "127.0.0.1"
+port = 3306
+user = "root"
+databaseName = "fable_logic_dev"
+
+[redisConfig]
+enabled = true
+host = "127.0.0.1"
+port = 6379
+db = 0
+
+[kafkaConfig]
+enabled = true
+mode = "kafka"
+brokers = ["127.0.0.1:9092"]
+topic = "fable.push.v1"
+
+[logic]
+httpAddress = "127.0.0.1:8081"
+rpcAddress = "127.0.0.1:9091"
+redisPrefix = "fable:dev:"
