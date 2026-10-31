@@ -1,6 +1,6 @@
 # Logic 角色契约
 
-状态：架构已接受；消息持久化、权威同步、Redis 路由和 Kafka Producer 组件已实现，独立服务尚待装配。Owner 为仓库维护者，修改 Logic 接口的 PR 作者同步本文。方法与字段以 [logic.proto](../../api/proto/fable/v1/logic.proto) 和 [DTO / RPC spec](../../api/proto/README.md) 为准，本文只维护职责和调用语义。
+状态：架构已接受；Logic 独立服务与本契约能力已实现；完整三角色聊天仍待 Comet/Job 运行链路接入。Owner 为仓库维护者，修改 Logic 接口的 PR 作者同步本文。方法与字段以 [logic.proto](../../api/proto/fable/v1/logic.proto) 和 [DTO / RPC spec](../../api/proto/README.md) 为准，本文只维护职责和调用语义。
 
 本文长期保留，作为写 Logic 代码前的参考。HTTP 以路由、Handler、DTO 和代码接口注释生成文档，具体见 [code-first 维护规则](../../api/proto/README.md)；不在本文重复维护字段表。纯字段变化更新代码/生成物，职责、授权边界或协作流程变化才同步本文。
 
@@ -20,7 +20,7 @@
 
 Logic 是原业务后端的新运行角色：HTTP API、MCP、用户/会话/群/联系人规则、AI 授权、消息持久化、Redis 路由和 Kafka 生产。它不持有 WebSocket，也不消费推送 Topic。
 
-注册登录、查询及群管理继续调用现有 [api/v1](../../internal/api/v1)、[gormservice](../../internal/service/gormservice)；AI 能力继续由 [aiservice](../../internal/service/aiservice) 与 [MCP](../../internal/mcpserver) 承载。普通消息、群消息、MCP 发送逐块接入 messageservice，不能让迁移顺便改变授权规则。
+注册登录、查询及群管理继续调用现有 [api/v1](../../internal/api/v1)、[gormservice](../../internal/service/gormservice)；AI 能力继续由 [aiservice](../../internal/service/aiservice) 与 [MCP](../../internal/mcpserver) 承载。普通消息、群消息、MCP 发送统一由 `internal/logic.Service` 编排，并由 `messagestore` 事务持久化；原业务授权规则保持。旧 `gormservice` 消息写法仅供隔离单体回归，新 Logic 不挂载旧 WS、不启动旧 Kafka 消费者。
 
 ## 公共 HTTP / MCP
 
@@ -39,7 +39,7 @@ sync 的消息以 message_id 表示原消息 UUID，附 conversation_id 与用�
 
 ## LogicService 内部 RPC
 
-所有方法需要按角色及实例授权的服务凭据；Connect 另外验证用户 JWT。方法与类型已在 Protobuf 固定，后续采用增量兼容修改；服务当前尚未实现。
+所有方法需要按角色及实例授权的服务凭据；Connect 另外验证用户 JWT。方法与类型已在 Protobuf 固定，后续采用增量兼容修改；九个方法已实现并通过真实后端集成验证。
 
 | 方法 | 调用方 | 输入 | 成功结果 / 副作用 | 重试语义 |
 | --- | --- | --- | --- | --- |
@@ -80,6 +80,18 @@ RPC 初始 deadline 提案：路由/续租 2 秒、发送 10 秒；Kafka publish
 3. 路由与实例租约只有 Logic 修改；缓存失败与路由失败分开处理。
 4. 同一会话的行锁覆盖新消息 ID 分配到提交，才能安全提供增量游标。
 5. 首期没有自动恢复数据库提交后未发布任务的后台扫描器；完整边界见设计第 7 节。
+
+## 独立运行与验证
+
+入口为 `cmd/logic`，配置参考 [Logic 示例](../../config/logic.example.toml)。`init-schema` 只接受显式选择且没有任何表的数据库，正常 `serve` 只校验目标结构，不执行 AutoMigrate。没有生产回填或旧 backlog 迁移。HTTP/MCP 使用同一个业务数据库；新 Logic 关闭旧查询缓存，历史和权限读权威数据库，Redis 客户端专用于路由。
+
+服务凭据为显式配置的 Comet token→instance/boot/address 授权，以及独立 Job/Kick token；开发监听和注册地址限制 loopback。Connect 再次验证 JWT 和用户存在；Heartbeat/Submit 检查当前路由。替换路由后通过有界队列/工作协程尽力 Kick，完全相同 Connect 四元组不踢自己。新逻辑上线规则以路由为准，踢旧连接不承诺瞬时完成。
+
+`/healthz` 表示进程存活；`/readyz` 分别检查 MySQL、Redis 路由和显式 Kafka Topic，任一失败为 503。Redis/Kafka 故障不阻止数据库历史接口服务；发送依赖或 dispatch 降级按上述契约表达。关闭先排空 HTTP/RPC，超出 5 秒则强制关闭，再关闭工作协程及客户端；Kafka writer 清理还可能等待其有界写超时，不能把 5 秒宣称为总退出上限。
+
+测试说明见[测试环境](../test-environment.md)。已验证真实 MySQL 下并发幂等/事务回滚/成员与白名单竞争、真实 Redis 下租约和条件更新、真实 Kafka 下显式 Topic/分区/载荷，并以实际 Logic RPC 连接两个真实 Comet 验证注册、续租、Kick、旧连接清理与持久化。HTTP/MCP 验证已授权发送、撤权重试、历史读取及大整数同步；跨组件编排的故障用例用捕获 Publisher 定位提交后降级，Kafka adapter 另以真实 Broker 验证。
+
+公开 `/wss`、Comet 用户连接循环、Job Kafka Fetch/Commit/DLQ、前端 v2 和全拓扑脚本仍属于其他角色/能力，不能据 Logic 完成宣称整个迁移完成。
 
 ## 逐块交付与验证
 

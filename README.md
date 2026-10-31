@@ -2,9 +2,11 @@
 
 Fable 是参考 KamaChat 业务组织方式的 Go 聊天学习项目，包含用户与会话、文本单聊、部分群聊功能，以及供外部 AI 客户端调用的 MCP Server。
 
-**当前状态：** 单实例聊天与 MCP 链路已有实现和测试；Redis 用于缓存。Kafka 模式、Docker Compose 和 K8s 双副本清单已经存在，但跨实例消息路由、消息确认与重放幂等尚未完成，不能据此宣称可靠分布式聊天或高可用。
+**旧单体状态：** 单实例聊天与 MCP 链路已有实现和测试；Redis 用于缓存。旧 Kafka 模式、Docker Compose 和 K8s 双副本清单缺少跨实例消息路由与重放幂等，不能用于验收新三角色拓扑。
 
-三角色迁移已交付独立的 [Comet 投递内核](internal/comet)，包含本地连接、WebSocket 写出、RPC 适配和 Logic 实例租约客户端；尚未接入现有入口与真实 Logic，当前启动方式不变。
+三角色迁移已交付独立的 [Comet 投递内核](internal/comet)，包含本地连接、WebSocket 写出、RPC 适配和 Logic 实例租约客户端；本轮已与真实 Logic 联调，公开 WebSocket 接入和 Comet 进程入口仍待实现。
+
+独立 [Logic 服务](cmd/logic) 已实现现有 HTTP/MCP、九个授权 RPC、事务消息持久化/幂等、Redis 路由、Kafka 生产和权威同步；使用独立新空库与 [Logic 配置](config/logic.example.toml)。原单体作为隔离回归入口保留。Comet 的公开用户接入和 Job 消费运行链路仍待接通，不代表新三角色聊天已可部署。HTTP code-first 文档与 PR 文档影响检查已接入。
 
 ## 文档入口
 
@@ -21,7 +23,7 @@ Fable 是参考 KamaChat 业务组织方式的 Go 聊天学习项目，包含用
 
 接口字段、环境变量和 MCP Schema 以总架构链接的源码与测试为准，避免在多份文档中重复维护。旧 MVP 规划、个人设计、面试笔记和未填写的报告已从当前文档集中移除；需要研究演进过程时，可阅读[清理前的文档快照](https://github.com/LosAveRoad/fable/tree/2d85cdbf1f229deb4fa17518ff7a1c419a08a893/docs)。该快照不作为当前契约。
 
-## 本地启动后端
+## 本地启动旧单体后端
 
 从仓库根目录执行。准备满足 [go.mod](go.mod) 的 Go 工具链，以及可连接、已创建开发数据库的 MySQL。
 
