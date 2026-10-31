@@ -63,6 +63,9 @@ jobs:
             exit 1
           fi
 
+      - name: Check HTTP generated contract
+        run: sh scripts/check-httpdocs.sh
+
       - name: Run unit tests
         run: go test ./...
 
