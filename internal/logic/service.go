@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"errors"
+	"log/slog"
 	"net"
 	"strconv"
 	"strings"
@@ -42,6 +43,7 @@ type CometGrant struct {
 	Token      string            `json:"token"`
 }
 type Config struct {
+	Logger              *slog.Logger // Defaults to slog.Default; no request/body fields are attached.
 	Routes              *routing.Store
 	Messages            MessageStore
 	Publisher           Publisher
@@ -67,6 +69,7 @@ type Service struct {
 	cancel              context.CancelFunc
 	workers             sync.WaitGroup
 	closeOnce           sync.Once
+	observation         *observability
 }
 
 func NewService(ctx context.Context, c Config) (*Service, error) {
@@ -86,7 +89,7 @@ func NewService(ctx context.Context, c Config) (*Service, error) {
 		grants = append(grants, g)
 	}
 	lifetime, cancel := context.WithCancel(ctx)
-	s := &Service{routes: c.Routes, messages: c.Messages, publisher: c.Publisher, jwtKey: append([]byte(nil), c.JWTSecret...), jobToken: c.JobToken, kickToken: c.KickToken, grants: grants, userExists: c.UserExists, kicks: make(chan kickTask, 128), cancel: cancel, dial: c.DialComet}
+	s := &Service{observation: newObservability(c.Logger), routes: c.Routes, messages: c.Messages, publisher: c.Publisher, jwtKey: append([]byte(nil), c.JWTSecret...), jobToken: c.JobToken, kickToken: c.KickToken, grants: grants, userExists: c.UserExists, kicks: make(chan kickTask, 128), cancel: cancel, dial: c.DialComet}
 	if s.dial == nil {
 		s.pool = newCometPool()
 		s.dial = s.pool.client
@@ -389,7 +392,9 @@ func (s *Service) SubmitMessage(ctx context.Context, r *pb.SubmitMessageRequest)
 	if _, e := s.routes.Check(ctx, r.Identity); e != nil {
 		return nil, mapError(e, r.RequestId)
 	}
+	started := time.Now()
 	saved, e := s.messages.Save(ctx, messagestore.Input{SenderID: r.Identity.UserId, ClientMessageID: r.ClientMessageId, Destination: r.Destination, Content: r.Content})
+	s.observeSave(ctx, dbSave, r.RequestId, started, saved, e)
 	if e != nil {
 		return nil, mapError(e, r.RequestId)
 	}
@@ -426,6 +431,7 @@ func (s *Service) ResolveComets(ctx context.Context, r *pb.ResolveCometsRequest)
 	return &pb.ResolveCometsResponse{Results: out}, nil
 }
 func (s *Service) SendAI(ctx context.Context, user, session, clientID, content string) (*pb.SendResult, error) {
+	requestID := uuid.NewString()
 	ctx, cancel := requestContext(ctx, true)
 	defer cancel()
 	if e := s.routes.Ping(ctx); e != nil {
@@ -434,11 +440,13 @@ func (s *Service) SendAI(ctx context.Context, user, session, clientID, content s
 	if clientID == "" {
 		clientID = uuid.NewString()
 	}
+	started := time.Now()
 	saved, e := s.messages.SaveAI(ctx, user, session, clientID, content)
+	s.observeSave(ctx, dbSaveAI, requestID, started, saved, e)
 	if e != nil {
 		return nil, e
 	}
-	return s.dispatch(ctx, clientID, saved, ""), nil
+	return s.dispatch(ctx, clientID, saved, requestID), nil
 }
 
 func sameConnection(a, b *pb.ConnectionIdentity) bool {

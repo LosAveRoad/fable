@@ -1,6 +1,6 @@
 # Logic 角色契约
 
-状态：架构已接受；Logic 独立服务与本契约能力已实现；完整三角色聊天仍待 Comet/Job 运行链路接入。Owner 为仓库维护者，修改 Logic 接口的 PR 作者同步本文。方法与字段以 [logic.proto](../../api/proto/fable/v1/logic.proto) 和 [DTO / RPC spec](../../api/proto/README.md) 为准，本文只维护职责和调用语义。
+状态：Logic 独立服务与本契约能力已实现；跨角色运行与验证状态见总架构。Owner 为仓库维护者，修改 Logic 接口的 PR 作者同步本文。方法与字段以 [logic.proto](../../api/proto/fable/v1/logic.proto) 和 [DTO / RPC spec](../../api/proto/README.md) 为准，本文只维护职责和调用语义。
 
 本文长期保留，作为写 Logic 代码前的参考。HTTP 以路由、Handler、DTO 和代码接口注释生成文档，具体见 [code-first 维护规则](../../api/proto/README.md)；不在本文重复维护字段表。纯字段变化更新代码/生成物，职责、授权边界或协作流程变化才同步本文。
 
@@ -57,7 +57,7 @@ sync 的消息以 message_id 表示原消息 UUID，附 conversation_id 与用�
 
 每次重试先检查当前权限，再返回旧幂等结果或重发。若用户已退群或 MCP 白名单被撤销，返回 PERMISSION_DENIED，不回传旧记录、不重新推送；它不代表先前请求没有提交，不得因此改用新 ID 重发。权限仍有效时返回原记录，未保存时才创建新记录。
 
-MCP 不经 Comet RPC：在同一 Logic 进程中完成 JWT/白名单校验后调用内部发送编排。内部调用也必须传明确来源，不能接受外部客户端设置 OriginAI。没有任何对外 RPC 用于跳过授权“直接保存消息”。
+MCP 不经 Comet RPC：在同一 Logic 进程中完成 JWT/白名单校验后调用内部发送编排。内部调用也必须传明确来源，不能接受外部客户端设置 OriginAI。没有任何对外 RPC 用于跳过授权“直接保存消息”。独立 Logic 的 MCP 使用无状态 HTTP 处理器，每个请求重新验证 Bearer Token；初始化、通知和工具请求可以轮询至不同 Logic，不依赖进程内 session。当前工具不需要服务器主动向客户端发起请求；未来增加有状态订阅时需重新设计会话策略。旧单体处理器仍保留原行为供隔离回归。
 
 ## SendResult 与错误
 
@@ -91,7 +91,7 @@ RPC 初始 deadline 提案：路由/续租 2 秒、发送 10 秒；Kafka publish
 
 测试说明见[测试环境](../test-environment.md)。已验证真实 MySQL 下并发幂等/事务回滚/成员与白名单竞争、真实 Redis 下租约和条件更新、真实 Kafka 下显式 Topic/分区/载荷，并以实际 Logic RPC 连接两个真实 Comet 验证注册、续租、Kick、旧连接清理与持久化。HTTP/MCP 验证已授权发送、撤权重试、历史读取及大整数同步；跨组件编排的故障用例用捕获 Publisher 定位提交后降级，Kafka adapter 另以真实 Broker 验证。
 
-公开 `/wss`、Comet 用户连接循环、Job Kafka Fetch/Commit/DLQ、前端 v2 和全拓扑脚本仍属于其他角色/能力，不能据 Logic 完成宣称整个迁移完成。
+`/metrics` 暴露固定集合的 RPC 方法/状态、保存/重放/冲突、数据库耗时、发布和 dispatch 结果计数；不把用户或消息 ID 作为标签。结构化日志只关联经校验的 request_id、message_id、task_id 和有界结果/耗时，不记录正文、令牌、地址或依赖错误原文。AI 调用为每次请求生成追踪 ID，原 client_message_id/message_id/task_id 与幂等身份保持不变。指标和探针属于运行端点，不混入业务 REST 的生成文档。
 
 ## 逐块交付与验证
 

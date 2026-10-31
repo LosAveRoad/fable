@@ -99,7 +99,7 @@ func Run(ctx context.Context, c Config) error {
 	gormservice.InitJWT(c.Base.JWTConfig)
 	defer func() { dao.GormDB = nil; dao.RedisClient = oldRedis; gormservice.InitJWT(config.JWTConfig{}) }()
 	server := &http.Server{Handler: logic.NewHandler(service, db, probe), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
-	rpcServer := grpc.NewServer(grpc.MaxRecvMsgSize(256 * 1024))
+	rpcServer := grpc.NewServer(grpc.MaxRecvMsgSize(256*1024), grpc.UnaryInterceptor(service.UnaryInterceptor()))
 	pb.RegisterLogicServiceServer(rpcServer, service)
 	// Defer order: drain both servers, then stop workers before clients/pool close.
 	return serve(ctx, server, rpcServer, httpListener, rpcListener)

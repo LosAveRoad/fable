@@ -7,9 +7,51 @@ import (
 	"mychat/internal/mcpserver/contract"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+// Requests must remain authorized and usable when the ingress changes Logic
+// replicas between initialize, notifications and tools/call.
+func TestMCPRequestsCanAlternateLogicReplicas(t *testing.T) {
+	key := []byte("stateless-jwt-secret-01234567890123456789")
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{"user_uuid": "U-authenticated", "exp": time.Now().Add(time.Hour).Unix()}).SignedString(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var called [2]atomic.Int32
+	handlers := make([]http.Handler, 2)
+	for i := range handlers {
+		handlers[i] = NewStatelessHTTPHandler(NewWithSend(func(_ context.Context, user string, _ contract.SendMessageInput) (contract.SendMessageOutput, error) {
+			if user != "U-authenticated" {
+				t.Errorf("replica trusted wrong identity: %s", user)
+			}
+			called[i].Add(1)
+			return contract.SendMessageOutput{Message: contract.Message{MessageUUID: "M-test"}}, nil
+		}), key)
+	}
+	var next atomic.Uint32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { handlers[(next.Add(1)-1)%2].ServeHTTP(w, r) }))
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	client := mcp.NewClient(&mcp.Implementation{Name: "replica-test", Version: "1"}, nil)
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: server.URL, HTTPClient: &http.Client{Transport: tokenTransport{token}}, DisableStandaloneSSE: true}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	for range 4 {
+		result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "send_message", Arguments: map[string]any{"session_uuid": "S-test", "content": "hello"}})
+		if err != nil || result.IsError {
+			t.Fatalf("replica switch failed: %+v %v", result, err)
+		}
+	}
+	if called[0].Load() == 0 || called[1].Load() == 0 {
+		t.Fatal("did not exercise both replica backends")
+	}
+}
 
 type tokenTransport struct{ token string }
 

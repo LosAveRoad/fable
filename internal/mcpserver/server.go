@@ -24,9 +24,20 @@ func NewWithSend(send tools.SendBackend) *mcp.Server {
 }
 
 func NewHTTPHandler(server *mcp.Server, jwtSecret []byte) http.Handler {
+	return newHTTPHandler(server, jwtSecret, false)
+}
+
+// NewStatelessHTTPHandler supports independent Logic replicas. Fable's tools
+// authenticate each request and keep durable state in SQL, so they need no
+// process-local MCP session or sticky ingress routing.
+func NewStatelessHTTPHandler(server *mcp.Server, jwtSecret []byte) http.Handler {
+	return newHTTPHandler(server, jwtSecret, true)
+}
+
+func newHTTPHandler(server *mcp.Server, jwtSecret []byte, stateless bool) http.Handler {
 	handler := mcp.NewStreamableHTTPHandler(
 		func(*http.Request) *mcp.Server { return server },
-		nil,
+		&mcp.StreamableHTTPOptions{Stateless: stateless},
 	)
 	return requireBearerToken(jwtSecret)(handler)
 }
