@@ -1,6 +1,6 @@
 # Comet 角色契约
 
-状态：架构已接受；本地投递内核、WebSocket 写出和 gRPC 适配已实现，尚未接入独立进程与真实 Logic。Owner 为仓库维护者，修改连接和投递行为的 PR 作者同步本文。方法及字段以 [comet.proto](../../api/proto/fable/v1/comet.proto) 和 [DTO / RPC spec](../../api/proto/README.md) 为准。
+状态：架构已接受；本地投递内核、WebSocket 写出、gRPC 适配与实例租约客户端已实现，尚未接入独立进程与真实 Logic。Owner 为仓库维护者，修改连接和投递行为的 PR 作者同步本文。方法及字段以 [comet.proto](../../api/proto/fable/v1/comet.proto) 和 [DTO / RPC spec](../../api/proto/README.md) 为准。
 
 本文长期保留，作为写 Comet 代码前的连接生命周期与协作参考；不因 `.proto` 存在而删除。RPC 字段及局部语义维护在 `.proto`/注释，职责或连接行为变化时同步本文。
 
@@ -13,6 +13,16 @@
 `NewRPCService` 在每个方法内部检查独立凭据：Job 只能 Deliver、Logic 只能 Kick、Admin 只能 Drain；空、短或相同凭据拒绝创建服务。角色不能通过省略 interceptor 绕过认证。请求还必须匹配本机 instance/boot。当前没有新增监听端口，部署入口后续提供受控网络与 TLS 配置。
 
 `Drain` 立即停止新注册，允许截止前继续投递，最迟 30 秒内关闭已有连接，重复调用不能延长截止时间。旧 `chatservice` 与当前业务入口保持原实现；本轮没有独立 Comet、Logic 或 Job 可执行程序，也不能据此宣称三角色聊天已经可运行。
+
+## 实例租约客户端
+
+`StartInstance(ctx, hub, logic, address, token, options)` 通过生成的 Logic RPC 客户端注册并维护实例租约。配置校验后取得 Hub 所有权；注册失败或结果不确定也关闭 Hub，并以原 instance/boot 条件注销。成功后 ctx 控制整个实例生命周期；不能把仅用于启动的短期 context 传入。RPC 连接池、关闭、TLS 与服务端实例授权仍由调用方和 Logic 负责。
+
+注册和续租校验本机 instance/boot、注册地址、draining 和有效截止时间，保留未知 Protobuf 扩展兼容性。续租默认每 10 秒，单 RPC 最多 2 秒；参数只允许缩短。RPC 的截止还受现有租约截止前 5 秒安全边界约束，不能依赖一个阻塞 RPC 等待到租约之后。瞬时依赖故障使 Ready 返回 false，但已有连接可服务至安全截止；有效续租恢复就绪。身份失效、永久拒绝、畸形响应或截止到达时关闭整个 Hub，不自动重新注册旧实例。
+
+Hub 的 Drain（包括现有管理 RPC）立即使实例 not ready，并通知租约协程尽快上报 draining=true；已开始的 active 续租响应不能清除本机 draining 状态。Ready 还检查当前时钟和 Hub 状态，不能以旧成功响应冒充仍有效。`Close` 幂等，先关闭本机连接，再尽力条件注销，完成后关闭 Done；Err 返回安全的停止/租约失效类别，不透传上游敏感错误。注销失败仍依赖 TTL 清理。
+
+本轮没有用户 Connect/Heartbeat/Disconnect、JWT/公开 WebSocket Handler 或进程启动入口。这里维护的是实例租约；每用户连接租约仍须单独实现。隔离测试服务器只验证 RPC 边界，不替代真实 Logic，也不作为可用的开发聊天服务。
 
 ## 职责与依赖
 

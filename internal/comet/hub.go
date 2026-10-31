@@ -38,12 +38,15 @@ func (c *Connection) Done() <-chan struct{}            { return c.done }
 func (c *Connection) close() { close(c.done) }
 
 type Hub struct {
-	identity  *pb.CometIdentity
-	queueSize int
-	commands  chan command
-	done      chan struct{}
-	stopped   chan struct{}
-	once      sync.Once
+	identity      *pb.CometIdentity
+	queueSize     int
+	commands      chan command
+	done          chan struct{}
+	stopped       chan struct{}
+	once          sync.Once
+	instanceOwned atomic.Bool
+	draining      atomic.Bool
+	drainSignal   chan struct{}
 }
 
 type command struct {
@@ -71,7 +74,7 @@ func NewHub(identity *pb.CometIdentity, queueSize int) (*Hub, error) {
 	if queueSize <= 0 {
 		queueSize = 256
 	}
-	h := &Hub{identity: proto.Clone(identity).(*pb.CometIdentity), queueSize: queueSize, commands: make(chan command), done: make(chan struct{}), stopped: make(chan struct{})}
+	h := &Hub{identity: proto.Clone(identity).(*pb.CometIdentity), queueSize: queueSize, commands: make(chan command), done: make(chan struct{}), stopped: make(chan struct{}), drainSignal: make(chan struct{}, 1)}
 	go h.run()
 	return h, nil
 }
@@ -240,6 +243,11 @@ func (h *Hub) Drain(ctx context.Context, deadline time.Time) (DrainState, error)
 			s.timerC = s.timer.C
 		}
 		s.draining = true
+		h.draining.Store(true)
+		select {
+		case h.drainSignal <- struct{}{}:
+		default:
+		}
 		return DrainState{Deadline: s.deadline, AlreadyDraining: already, ActiveConnections: uint64(len(s.clients))}, nil
 	})
 }

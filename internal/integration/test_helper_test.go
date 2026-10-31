@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -74,15 +75,15 @@ func TestMain(m *testing.M) {
 func testMySQLConfig() config.MySQLConfig {
 	return config.MySQLConfig{
 		Host:         envOrDefault("TEST_MYSQL_HOST", "127.0.0.1"),
-		Port:         3306,
+		Port:         envPort("TEST_MYSQL_PORT", 3306),
 		User:         envOrDefault("TEST_MYSQL_USER", "root"),
-		Password:     envOrDefault("TEST_MYSQL_PASSWORD", "mychat-dev-password"),
+		Password:     envPassword("TEST_MYSQL_PASSWORD", "mychat-dev-password"),
 		DatabaseName: envOrDefault("TEST_MYSQL_DATABASE", "mychat_test"),
 	}
 }
 
 func testRedisConfig() config.RedisConfig {
-	return config.RedisConfig{Host: envOrDefault("TEST_REDIS_HOST", "127.0.0.1"), Port: 6379, Password: os.Getenv("TEST_REDIS_PASSWORD"), DB: 0, Enabled: true, Required: true}
+	return config.RedisConfig{Host: envOrDefault("TEST_REDIS_HOST", "127.0.0.1"), Port: envPort("TEST_REDIS_PORT", 6379), Password: os.Getenv("TEST_REDIS_PASSWORD"), DB: 0, Enabled: true, Required: true}
 }
 
 func envOrDefault(name, fallback string) string {
@@ -251,4 +252,18 @@ type wschatMessage struct {
 	Content     string `json:"content"`
 	Origin      int8   `json:"origin"`
 	ReceiveType int8   `json:"receive_type"`
+}
+
+func envPort(name string, fallback int) int {
+	v, e := strconv.Atoi(os.Getenv(name))
+	if e != nil || v < 1 || v > 65535 {
+		return fallback
+	}
+	return v
+}
+func envPassword(name, fallback string) string {
+	if v, ok := os.LookupEnv(name); ok {
+		return v
+	}
+	return fallback
 }

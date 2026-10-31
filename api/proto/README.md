@@ -10,9 +10,9 @@
 | LogicService | [logic.proto](fable/v1/logic.proto) | 9 个 unary RPC，连接管理、发送和寻址 |
 | CometService | [comet.proto](fable/v1/comet.proto) | 3 个 unary RPC，Deliver、Kick、Drain |
 | JSON / Redis DTO | [internal/dto/im](../../internal/dto/im) | v2 WS、同步页、Kafka、内部租约的 Go 类型声明 |
-| 当前 HTTP 接口 | [路由](../../internal/https_server/https_server.go)、[Handler](../../internal/api/v1)、[请求](../../internal/dto/request)/[响应 DTO](../../internal/dto/response) | code-first 的维护源；生成工具尚未接入 |
+| 当前 HTTP 接口 | [路由](../../internal/https_server/https_server.go)、[Handler](../../internal/api/v1)、[请求](../../internal/dto/request)/[响应 DTO](../../internal/dto/response) | code-first 的维护源；路由同源生成与漂移检查已接入 |
 
-RPC 直接使用生成的 [mychat/api/gen/fable/v1](../gen/fable/v1) 类型，不再手写第二份 RPC request/response。已提交生成代码及投递所需的 gRPC runtime；Comet 投递内核和 Job 单任务内核已实现，尚无独立服务监听入口、真实 Logic 或 Job 消费运行链路。JSON DTO 使用 `encoding/json`，不是 ProtoJSON；Comet 写出端和 Job 投递端显式转换，其他适配由相应实现交付。
+RPC 直接使用生成的 [mychat/api/gen/fable/v1](../gen/fable/v1) 类型，不再手写第二份 RPC request/response。已提交生成代码及 gRPC runtime；Logic 九个 RPC 及独立入口、Comet 投递与实例租约客户端、Job 单任务投递内核均已实现，Comet 公开接入和 Job 消费运行入口仍待接入。JSON DTO 使用 `encoding/json`，不是 ProtoJSON；Comet 写出端和 Job 投递端显式转换，其他适配由相应实现交付。
 
 三个角色契约长期保留，作为实施前的职责和协作参考；它们不承担逐字段 Schema 的另一份维护。RPC spec 维护在 `.proto` 和就近注释中；角色边界、调用目的、业务前置条件或跨角色流程变化时才同步角色文档。HTTP 维护按以下 code-first 规则进行。
 
@@ -31,7 +31,9 @@ HTTP 文档从实际路由注册、Handler、请求/响应 DTO、校验标签和
 
 角色契约可以提出待实现的 HTTP 能力，但生成文档只发布已注册实现的接口，不能把设计中的同步接口当已交付。WebSocket 帧和 MCP tools 各有自己的协议/Schema，不把它们的全部消息结构塞进 REST 文档。
 
-**当前状态：** 仓库已有 Gin 路由、Handler、DTO 和测试；HTTP 生成工具、生成产物、路由覆盖检查及 CI 漂移门禁尚未接入。`scripts/check-contracts.sh` 只检查 RPC spec/Go DTO 编译，不能作为 HTTP 文档一致性的证明。先完成这个维护闭环，再随各业务块持续更新，不写固定 PR 编号。
+**当前状态：** Logic 业务路由及接口元数据同源维护于 `internal/https_server/route_catalog.go`，`go run ./cmd/httpdocs` 使用仓库内固定的 Go 生成器从路由元数据及 DTO 反射生成 [OpenAPI 3.1 JSON](../openapi/http.json)。`sh scripts/check-httpdocs.sh` 重新生成、比较产物并执行真实路由覆盖及代表性状态/响应契约测试；CI 自动运行。HTTP 文档只包含已挂载的业务 REST 路由，不把 WS 帧或 MCP tools 当作 REST。健康探针由进程入口管理。
+
+PR 模板要求恰好选择一项文档影响；`PR documentation impact` Action 拒绝缺少选择、需要却没有文档/接口生成物变更，以及不需要却没有具体原因的 PR。它检查声明与文件，不能证明文档内容必然正确。仓库 Owner 可将该检查设为 required；当前工作不修改分支保护权限。`scripts/check-contracts.sh` 仍只检查 RPC spec/Go DTO 编译，不能替代 HTTP 校验。
 
 ## 公共值与存储结构
 

@@ -1,6 +1,8 @@
 package tools
 
 import (
+	"context"
+	"mychat/internal/mcpserver/contract"
 	"mychat/internal/mcpserver/prompts"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -13,7 +15,27 @@ const (
 	SendMessageName       = "send_message"
 )
 
-func Register(server *mcp.Server) {
+type SendBackend func(context.Context, string, contract.SendMessageInput) (contract.SendMessageOutput, error)
+
+func Register(server *mcp.Server) { RegisterWithSend(server, nil) }
+
+// RegisterWithSend binds a backend to this server, without a process-global hook.
+func RegisterWithSend(server *mcp.Server, backend SendBackend) {
+	send := SendMessage
+	if backend != nil {
+		send = func(ctx context.Context, req *mcp.CallToolRequest, in contract.SendMessageInput) (*mcp.CallToolResult, contract.SendMessageOutput, error) {
+			user, err := authenticatedUserUUID(req)
+			if err != nil {
+				return nil, contract.SendMessageOutput{}, err
+			}
+			out, err := backend(ctx, user, in)
+			if err != nil {
+				return nil, contract.SendMessageOutput{}, safeToolError(err)
+			}
+			return nil, out, nil
+		}
+	}
+
 	annotations := &mcp.ToolAnnotations{
 		ReadOnlyHint:   true,
 		IdempotentHint: true,
@@ -47,7 +69,7 @@ func Register(server *mcp.Server) {
 			IdempotentHint:  false,
 			OpenWorldHint:   boolPointer(false),
 		},
-	}, SendMessage)
+	}, send)
 }
 
 func boolPointer(value bool) *bool {

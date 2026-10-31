@@ -14,7 +14,7 @@
 
 `Result` 保留完整任务及本次处理范围内的有序逐用户结果，`PendingRecipients()` 给出未终结子集；`Attempts` 计入查询/解析失败的任务轮次。存在 pending 时返回 `ErrUnresolved`，取消/截止同时保留 context 错误和已知进展。nil error 只说明全部本次目标已终结，不等于客户端收到，也不执行 offset 提交。
 
-当前未实现 Kafka Fetch/Commit、DLQ 写入/重放命令、跨任务冲突检测/报警、管理端点或独立 Job 进程；不接入旧命令 Topic、不访问数据库。RPC 客户端的连接池、关闭和传输安全由调用方负责；选择器必须遵守 context，不从任务接收地址。测试使用真实 gRPC 与两个真实 Comet 内核；缺失的 Logic 只由测试服务器代替，不接入实际聊天链路。
+当前未实现 Kafka Fetch/Commit、DLQ 写入/重放命令、跨任务冲突检测/报警、管理端点或独立 Job 进程；不接入旧命令 Topic、不访问数据库。RPC 客户端的连接池、关闭和传输安全由调用方负责；选择器必须遵守 context，不从任务接收地址。Job 内核测试使用真实 gRPC 与两个真实 Comet 内核，并以测试服务器隔离 Logic 依赖；真实 Logic 服务已在独立入口实现，但尚未通过 Job 消费入口接通完整聊天链路。
 
 ## 角色接口
 
