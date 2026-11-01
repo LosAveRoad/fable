@@ -5,6 +5,9 @@ package comet
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
+	"net"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -21,13 +24,14 @@ var (
 )
 
 type Connection struct {
-	identity *pb.ConnectionIdentity
-	outbound chan *pb.MessageView
-	controls chan socketControl
-	pending  bool
-	done     chan struct{}
-	hub      *Hub
-	writer   atomic.Bool
+	identity   *pb.ConnectionIdentity
+	outbound   chan *pb.MessageView
+	controls   chan socketControl
+	pending    bool
+	done       chan struct{}
+	hub        *Hub
+	writer     atomic.Bool
+	slowClosed atomic.Bool
 }
 
 func (c *Connection) Identity() *pb.ConnectionIdentity {
@@ -49,6 +53,9 @@ type Hub struct {
 	instanceOwned atomic.Bool
 	draining      atomic.Bool
 	drainSignal   chan struct{}
+	queueFull     atomic.Uint64
+	staleTargets  atomic.Uint64
+	slowCloses    atomic.Uint64
 }
 
 type command struct {
@@ -214,12 +221,15 @@ func (h *Hub) Deliver(ctx context.Context, taskID string, message *pb.MessageVie
 				outcome = pb.DeliveryOutcome_DELIVERY_OUTCOME_DRAINING
 			case c == nil || c.pending:
 			case !sameConnection(c.identity, id):
+				h.staleTargets.Add(1)
 				outcome = pb.DeliveryOutcome_DELIVERY_OUTCOME_STALE
 			default:
 				select {
 				case c.outbound <- proto.Clone(message).(*pb.MessageView):
 					outcome = pb.DeliveryOutcome_DELIVERY_OUTCOME_ENQUEUED
 				default:
+					h.queueFull.Add(1)
+					c.markSlow()
 					outcome = pb.DeliveryOutcome_DELIVERY_OUTCOME_QUEUE_FULL
 					delete(s.clients, id.UserId)
 					c.close()
@@ -271,4 +281,35 @@ func (h *Hub) activate(ctx context.Context, c *Connection) error {
 		return true, nil
 	})
 	return err
+}
+
+func (c *Connection) markSlow() {
+	if c.slowClosed.CompareAndSwap(false, true) {
+		c.hub.slowCloses.Add(1)
+	}
+}
+func (c *Connection) observeWriteFailure(err error) {
+	var networkError net.Error
+	if errors.As(err, &networkError) && networkError.Timeout() {
+		c.markSlow()
+	}
+}
+func (h *Hub) writeMetrics(ctx context.Context, w io.Writer) {
+	bounded, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer cancel()
+	depth, err := call(bounded, h, func(s *hubState) (int, error) {
+		total := 0
+		for _, c := range s.clients {
+			total += len(c.outbound) + len(c.controls)
+		}
+		return total, nil
+	})
+	draining := 0
+	if h.draining.Load() {
+		draining = 1
+	}
+	if err == nil {
+		fmt.Fprintf(w, "fable_comet_queue_depth %d\n", depth)
+	}
+	fmt.Fprintf(w, "fable_comet_queue_full_total %d\nfable_comet_stale_targets_total %d\nfable_comet_slow_closes_total %d\nfable_comet_draining %d\n", h.queueFull.Load(), h.staleTargets.Load(), h.slowCloses.Load(), draining)
 }

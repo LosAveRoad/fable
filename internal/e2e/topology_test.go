@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,6 +35,7 @@ import (
 )
 
 type manifest struct {
+	RunID    string            `json:"run_id"`
 	Secrets  map[string]string `json:"secrets"`
 	Database struct {
 		Name string `json:"name"`
@@ -51,6 +53,7 @@ type manifest struct {
 	Kafka struct {
 		Topic   string   `json:"topic"`
 		DLQ     string   `json:"dlq_topic"`
+		Group   string   `json:"group"`
 		Brokers []string `json:"brokers"`
 	} `json:"kafka"`
 	Processes map[string]struct {
@@ -61,6 +64,7 @@ type topology struct {
 	root, dir      string
 	env            []string
 	state          manifest
+	owned          manifest
 	db             *gorm.DB
 	users          [3]string
 	session, group string
@@ -84,7 +88,23 @@ func newTopology(t *testing.T) *topology {
 	f.dir = filepath.Join(f.dir, "runtime")
 	mysqlHost, mysqlPort, _ := strings.Cut(cfg.Addr, ":")
 	redisHost, redisPort, _ := strings.Cut(redisAddress, ":")
-	f.env = append(os.Environ(), "FABLE_LOCAL_RUNTIME_DIR="+f.dir, "FABLE_LOCAL_EXTERNAL=1", "FABLE_LOCAL_PORT_BASE=0", "FABLE_LOCAL_DATABASE=fable_e2e_"+strings.ReplaceAll(uuid.NewString(), "-", ""), "FABLE_MYSQL_HOST="+mysqlHost, "FABLE_MYSQL_PORT="+mysqlPort, "FABLE_MYSQL_USER="+cfg.User, "FABLE_MYSQL_PASSWORD="+cfg.Passwd, "FABLE_REDIS_HOST="+redisHost, "FABLE_REDIS_PORT="+redisPort, "FABLE_KAFKA_BROKERS="+broker)
+	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
+	f.env = topologyEnvironment(os.Environ(), []string{"FABLE_LOCAL_RUNTIME_DIR=" + f.dir, "FABLE_LOCAL_EXTERNAL=1", "FABLE_LOCAL_PORT_BASE=0", "FABLE_LOCAL_DATABASE=fable_e2e_" + suffix, "FABLE_LOCAL_TOPIC=fable.push.v1.e2e_" + suffix, "FABLE_LOCAL_DLQ_TOPIC=fable.push.dlq.v1.e2e_" + suffix, "FABLE_LOCAL_GROUP=fable-push-job-v1.e2e_" + suffix, "FABLE_MYSQL_HOST=" + mysqlHost, "FABLE_MYSQL_PORT=" + mysqlPort, "FABLE_MYSQL_USER=" + cfg.User, "FABLE_MYSQL_PASSWORD=" + cfg.Passwd, "FABLE_REDIS_HOST=" + redisHost, "FABLE_REDIS_PORT=" + redisPort, "FABLE_KAFKA_BROKERS=" + broker})
+	// Capture ownership from fresh configuration BEFORE any service starts or
+	// resource is created. Later manifests cannot expand cleanup's authority.
+	configure := exec.Command("python3", "-c", "import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); import manage; manage.configure(Path(sys.argv[2]), 0, True)", filepath.Join(f.root, "scripts/local"), f.dir)
+	configure.Env = f.env
+	if raw, err := configure.CombinedOutput(); err != nil {
+		t.Fatalf("configure isolated topology: %v %s", err, raw)
+	}
+	rawOwned, err := os.ReadFile(filepath.Join(f.dir, "private.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal(rawOwned, &f.owned); err != nil {
+		t.Fatal(err)
+	}
+
 	t.Cleanup(func() {
 		if err := f.command("down"); err != nil {
 			t.Errorf("owned topology cleanup failed: %v", err)
@@ -103,6 +123,9 @@ func newTopology(t *testing.T) *topology {
 	}
 	if e = json.Unmarshal(raw, &f.state); e != nil {
 		t.Fatal(e)
+	}
+	if err := f.withOwnedResources(func() {}); err != nil {
+		t.Fatal(err)
 	}
 	cfg.DBName = f.state.Database.Name
 	cfg.ParseTime = true
@@ -173,50 +196,77 @@ func (f *topology) preserveFailureLogs() {
 		}
 	}
 }
+func topologyEnvironment(ambient, chosen []string) []string {
+	env := make([]string, 0, len(ambient)+len(chosen))
+	for _, entry := range ambient {
+		if !strings.HasPrefix(entry, "FABLE_") {
+			env = append(env, entry)
+		}
+	}
+	return append(env, chosen...)
+}
+
+func (f *topology) withOwnedResources(cleanup func()) error {
+	owned, current := f.owned, f.state
+	if owned.RunID == "" || !strings.HasPrefix(owned.Database.Name, "fable_e2e_") || owned.Redis.Prefix != "fable:local:"+owned.RunID+":" || !strings.HasPrefix(owned.Kafka.Topic, "fable.push.v1.e2e_") || !strings.HasPrefix(owned.Kafka.DLQ, "fable.push.dlq.v1.e2e_") || !strings.HasPrefix(owned.Kafka.Group, "fable-push-job-v1.e2e_") || len(owned.Kafka.Brokers) == 0 {
+		return fmt.Errorf("missing isolated resource ownership")
+	}
+	if current.RunID != owned.RunID || current.Database.Name != owned.Database.Name || current.Redis.Prefix != owned.Redis.Prefix || !reflect.DeepEqual(current.Kafka, owned.Kafka) {
+		return fmt.Errorf("manifest resource ownership changed")
+	}
+	cleanup()
+	return nil
+}
+
 func (f *topology) cleanupResources(dsn, redisAddress string) {
 	if f.state.Database.Name == "" {
 		raw, _ := os.ReadFile(filepath.Join(f.dir, "private.json"))
 		_ = json.Unmarshal(raw, &f.state)
 	}
-	if strings.HasPrefix(f.state.Database.Name, "fable_e2e_") {
-		cfg, e := mysql.ParseDSN(dsn)
-		if e == nil {
-			cfg.DBName = ""
-			db, e := gorm.Open(gormmysql.Open(cfg.FormatDSN()), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err := f.withOwnedResources(func() {
+		if strings.HasPrefix(f.state.Database.Name, "fable_e2e_") {
+			cfg, e := mysql.ParseDSN(dsn)
 			if e == nil {
-				db.Exec("DROP DATABASE `" + f.state.Database.Name + "`")
-				sqlDB, _ := db.DB()
-				sqlDB.Close()
+				cfg.DBName = ""
+				db, e := gorm.Open(gormmysql.Open(cfg.FormatDSN()), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+				if e == nil {
+					db.Exec("DROP DATABASE `" + f.state.Database.Name + "`")
+					sqlDB, _ := db.DB()
+					sqlDB.Close()
+				}
 			}
 		}
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if f.state.Redis.Prefix != "" {
-		r := redis.NewClient(&redis.Options{Addr: redisAddress})
-		defer r.Close()
-		var cursor uint64
-		for {
-			keys, next, e := r.Scan(ctx, cursor, f.state.Redis.Prefix+"*", 100).Result()
-			if e != nil {
-				break
-			}
-			if len(keys) > 0 {
-				r.Del(ctx, keys...)
-			}
-			cursor = next
-			if cursor == 0 {
-				break
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if f.state.Redis.Prefix != "" {
+			r := redis.NewClient(&redis.Options{Addr: redisAddress})
+			defer r.Close()
+			var cursor uint64
+			for {
+				keys, next, e := r.Scan(ctx, cursor, f.state.Redis.Prefix+"*", 100).Result()
+				if e != nil {
+					break
+				}
+				if len(keys) > 0 {
+					r.Del(ctx, keys...)
+				}
+				cursor = next
+				if cursor == 0 {
+					break
+				}
 			}
 		}
-	}
-	if len(f.state.Kafka.Brokers) > 0 {
-		transport := &kafka.Transport{}
-		defer transport.CloseIdleConnections()
-		admin := &kafka.Client{Addr: kafka.TCP(f.state.Kafka.Brokers...), Transport: transport}
-		_, _ = admin.DeleteTopics(ctx, &kafka.DeleteTopicsRequest{Topics: []string{f.state.Kafka.Topic, f.state.Kafka.DLQ}})
+		if len(f.state.Kafka.Brokers) > 0 {
+			transport := &kafka.Transport{}
+			defer transport.CloseIdleConnections()
+			admin := &kafka.Client{Addr: kafka.TCP(f.state.Kafka.Brokers...), Transport: transport}
+			_, _ = admin.DeleteTopics(ctx, &kafka.DeleteTopicsRequest{Topics: []string{f.state.Kafka.Topic, f.state.Kafka.DLQ}})
+		}
+	}); err != nil {
+		f.t.Errorf("refusing resource cleanup: %v", err)
 	}
 }
+
 func (f *topology) token(user string, expiry time.Time) string {
 	v, e := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{"user_uuid": user, "exp": expiry.Unix()}).SignedString([]byte(f.state.Secrets["jwt"]))
 	f.check(e)

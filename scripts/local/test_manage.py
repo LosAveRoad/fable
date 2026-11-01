@@ -14,6 +14,10 @@ import time
 import concurrent.futures
 from unittest.mock import patch
 
+# Launch exactly the canonical path recorded by process_record, including on
+# merged-usr Linux where /bin/sleep and /usr/bin/sleep are the same file.
+SLEEP=str(Path(shutil.which('sleep')).resolve())
+
 spec=importlib.util.spec_from_file_location('manage',Path(__file__).with_name('manage.py'))
 manage=importlib.util.module_from_spec(spec)
 spec.loader.exec_module(manage)
@@ -25,9 +29,9 @@ class LifecycleTest(unittest.TestCase):
             def log_message(self,*args):pass
         server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Probe)
         thread=threading.Thread(target=server.serve_forever);thread.start()
-        child=subprocess.Popen([shutil.which('sleep'),'10'])
+        child=subprocess.Popen([SLEEP,'10'])
         try:
-            record=manage.process_record(child.pid,shutil.which('sleep'))
+            record=manage.process_record(child.pid,SLEEP)
             with patch.dict(os.environ,{'http_proxy':'http://127.0.0.1:1','HTTP_PROXY':'http://127.0.0.1:1','no_proxy':'','NO_PROXY':''}):
                 manage.wait_ready('http://127.0.0.1:'+str(server.server_port),record,timeout=.5)
         finally:child.terminate();child.wait();server.shutdown();server.server_close();thread.join()
@@ -58,7 +62,7 @@ class LifecycleTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);(root/'valuable').write_text('keep')
             with self.assertRaises(ValueError):manage.configure(root,port_base=0,external=True)
-            executable=shutil.which('sleep')
+            executable=SLEEP
             child=subprocess.Popen([executable,'30'])
             try:
                 record=manage.process_record(child.pid,executable)
@@ -80,8 +84,8 @@ class LifecycleTest(unittest.TestCase):
             self.assertNotIn('fable.chat.message',json.dumps(state))
 
     def test_exited_owned_child_can_be_reaped_without_signalling(self):
-        child=subprocess.Popen([shutil.which('sleep'),'.05'])
-        record=manage.process_record(child.pid,shutil.which('sleep'))
+        child=subprocess.Popen([SLEEP,'.05'])
+        record=manage.process_record(child.pid,SLEEP)
         import time
         time.sleep(.1)
         manage.stop_process(record)
@@ -111,6 +115,7 @@ class ReviewedLifecycleTest(unittest.TestCase):
 import importlib.util, pathlib, os, subprocess, shutil, time
 spec=importlib.util.spec_from_file_location('manage',os.environ['MANAGER']);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 root=pathlib.Path(os.environ['FIXTURE_ROOT'])
+SLEEP=str(pathlib.Path(shutil.which('sleep')).resolve())
 original=m.configure
 def configure(*a,**kw):
     value=original(*a,**kw);time.sleep(.2);return value
@@ -121,9 +126,9 @@ def invoke(args,env=None):
 m.invoke=invoke
 m.selected_smoke=lambda *a,**kw:None
 def start(directory,state,name,role,args=None,extra=None):
-    child=subprocess.Popen([shutil.which('sleep'),'40'],start_new_session=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+    child=subprocess.Popen([SLEEP,'40'],start_new_session=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
     with (root/'children').open('a') as f:f.write(str(child.pid)+'\n')
-    state['processes'][args or role]=m.process_record(child.pid,shutil.which('sleep'));m.save_state(directory,state)
+    state['processes'][args or role]=m.process_record(child.pid,SLEEP);m.save_state(directory,state)
     if os.environ['FIXTURE_MODE']=='cancel':
         (root/'started').write_text(str(child.pid));time.sleep(40)
     time.sleep(.03)
@@ -146,7 +151,7 @@ m.main()
         if (root/'children').exists():
             for pid in map(int,(root/'children').read_text().splitlines()):
                 try:
-                    record=manage.process_record(pid,shutil.which('sleep'))
+                    record=manage.process_record(pid,SLEEP)
                     if manage.process_matches(record):os.kill(pid,signal.SIGKILL)
                 except (ProcessLookupError,subprocess.CalledProcessError):pass
 
@@ -202,7 +207,7 @@ m.main()
     def test_sigterm_during_startup_cleans_only_owned_children(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);child=self.fixture(root,'cancel')
-            unrelated=subprocess.Popen([shutil.which('sleep'),'40'])
+            unrelated=subprocess.Popen([SLEEP,'40'])
             try:
                 until=time.monotonic()+10
                 while not (root/'started').exists() and time.monotonic()<until:time.sleep(.02)

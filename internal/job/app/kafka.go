@@ -91,12 +91,12 @@ type partitionSource struct {
 func (p *partitionSource) Fetch(ctx context.Context) (kafka.Message, error) {
 	m, err := p.reader.FetchMessage(ctx)
 	if err == nil {
-		p.state.setLag(p.partition, p.reader.Lag())
+		p.state.setLag(p.generation.ID, p.partition, p.reader.Lag())
 	}
 	return m, err
 }
 func (p *partitionSource) Processed(m kafka.Message) {
-	p.state.progress(p.partition, m.Offset, false)
+	p.state.progress(p.generation.ID, p.partition, m.Offset, false)
 }
 func (p *partitionSource) Commit(ctx context.Context, m kafka.Message) error {
 	if ctx.Err() != nil {
@@ -109,7 +109,7 @@ func (p *partitionSource) Commit(ctx context.Context, m kafka.Message) error {
 	// coordinator timeout. This API deliberately accepts the NEXT offset.
 	err := p.generation.CommitOffsets(map[string]map[int]int64{p.topic: {p.partition: m.Offset + 1}})
 	if err == nil {
-		p.state.progress(p.partition, m.Offset, true)
+		p.state.progress(p.generation.ID, p.partition, m.Offset, true)
 	}
 	return err
 }
@@ -165,10 +165,14 @@ func runConsumer(ctx context.Context, c Config, consumer *job.Consumer, state *r
 			return errKafka
 		}
 		errorsInRow = 0
-		state.joined.Store(true)
+		ids := make([]int, 0, len(gen.Assignments[c.Topic]))
+		for _, assignment := range gen.Assignments[c.Topic] {
+			ids = append(ids, assignment.ID)
+		}
+		state.assign(gen.ID, ids)
 		// A generation without assigned partitions remains a healthy idle member.
 		// This watcher also clears readiness immediately when ownership ends.
-		gen.Start(func(gctx context.Context) { <-gctx.Done(); state.joined.Store(false) })
+		gen.Start(func(gctx context.Context) { <-gctx.Done(); state.release(gen.ID) })
 		for _, assignment := range gen.Assignments[c.Topic] {
 			assignment := assignment
 			workers.Add(1)
@@ -203,7 +207,7 @@ func runConsumer(ctx context.Context, c Config, consumer *job.Consumer, state *r
 							lag, err := reader.ReadLag(bounded)
 							stop()
 							if err == nil {
-								state.setLag(assignment.ID, lag)
+								state.setLag(gen.ID, assignment.ID, lag)
 							}
 						}
 					}

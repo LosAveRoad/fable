@@ -4,10 +4,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	pb "mychat/api/gen/fable/v1"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -101,15 +107,16 @@ func TestConsumerCancellationInterruptsCoordinatorIO(t *testing.T) {
 
 func TestProgressTimestampFollowsProcessingNotFetching(t *testing.T) {
 	state := &runtimeState{}
-	state.setLag(1, 7)
+	state.assign(1, []int{1})
+	state.setLag(1, 1, 7)
 	state.mu.Lock()
 	p := state.partitions[1]
 	state.mu.Unlock()
 	if p.ProcessedAt != 0 || p.Lag != 7 {
 		t.Fatal("idle lag probe claimed processed task")
 	}
-	state.progress(1, 9007199254740993, false)
-	state.progress(1, 9007199254740993, true)
+	state.progress(1, 1, 9007199254740993, false)
+	state.progress(1, 1, 9007199254740993, true)
 	state.mu.Lock()
 	p = state.partitions[1]
 	state.mu.Unlock()
@@ -128,5 +135,119 @@ func TestCorrelationJSONLogsContainSafeFieldsAndStringOffsets(t *testing.T) {
 	}
 	if entry["source_offset"] != "9007199254740993" || entry["request_id"] != "request-1" || entry["stage"] != "commit" || entry["task_id"] != "push:v1:message:0" {
 		t.Fatalf("lost structured correlation %+v", entry)
+	}
+}
+
+func TestPartitionDiagnosticsFollowGenerationOwnership(t *testing.T) {
+	s := &runtimeState{}
+	s.assign(11, []int{1, 2})
+	s.setLag(11, 1, 19)
+	s.progress(11, 1, 40, false)
+	s.release(11)
+	if len(s.partitions) != 0 {
+		t.Fatal("released lag remains", s.partitions)
+	}
+	s.assign(12, []int{2})
+	s.setLag(12, 2, 3)
+	// Old deferred cleanup and late samplers must not erase or repopulate the
+	// current generation, even for a partition reassigned to the same process.
+	var late sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		late.Add(1)
+		go func() {
+			defer late.Done()
+			for n := 0; n < 100; n++ {
+				s.release(11)
+				s.setLag(11, 1, 99)
+				s.setLag(11, 2, 99)
+				s.progress(11, 2, 99, true)
+			}
+		}()
+	}
+	late.Wait()
+	s.release(11)
+	s.setLag(11, 1, 99)
+	s.setLag(11, 2, 99)
+	s.progress(11, 2, 99, true)
+	if len(s.partitions) != 1 || s.partitions[2].Lag != 3 || s.partitions[2].CommittedAt != 0 || !s.joined.Load() {
+		t.Fatal("old generation corrupted ownership", s.partitions)
+	}
+	s.assign(13, nil)
+	if len(s.partitions) != 0 || !s.joined.Load() {
+		t.Fatal("idle member exports old lag")
+	}
+}
+
+type timedRPCServer struct {
+	pb.UnimplementedLogicServiceServer
+	pb.UnimplementedCometServiceServer
+}
+
+func (timedRPCServer) LookupRoutes(context.Context, *pb.LookupRoutesRequest) (*pb.LookupRoutesResponse, error) {
+	return nil, status.Error(codes.Unavailable, "private backend detail")
+}
+func (timedRPCServer) ResolveComets(context.Context, *pb.ResolveCometsRequest) (*pb.ResolveCometsResponse, error) {
+	return &pb.ResolveCometsResponse{}, nil
+}
+func (timedRPCServer) Deliver(context.Context, *pb.DeliverRequest) (*pb.DeliverResponse, error) {
+	return &pb.DeliverResponse{}, nil
+}
+func TestRPCDurationMetricsObserveRealCallsWithoutEndpointLabels(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := grpc.NewServer()
+	pb.RegisterLogicServiceServer(server, timedRPCServer{})
+	pb.RegisterCometServiceServer(server, timedRPCServer{})
+	go server.Serve(listener)
+	defer server.Stop()
+	state := &runtimeState{}
+	pool := newRPCPool(2)
+	pool.metrics = &state.rpc
+	defer pool.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	conn, err := pool.get(ctx, listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pb.NewLogicServiceClient(conn).LookupRoutes(ctx, &pb.LookupRoutesRequest{}); status.Code(err) != codes.Unavailable {
+		t.Fatal(err)
+	}
+	if _, err = pb.NewCometServiceClient(conn).Deliver(ctx, &pb.DeliverRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pb.NewLogicServiceClient(conn).ResolveComets(ctx, &pb.ResolveCometsRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	// An unknown method cannot grow the exported vocabulary.
+	_ = conn.Invoke(ctx, "/foreign.private.Service/secret", &pb.DeliverRequest{}, &pb.DeliverResponse{})
+	recorder := httptest.NewRecorder()
+	probeHandler(state, job.NewConsumer(nil, nil, job.ConsumerOptions{}), nil).ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
+	metrics := recorder.Body.String()
+	for _, method := range []string{"LookupRoutes", "ResolveComets", "Deliver"} {
+		if !strings.Contains(metrics, "fable_job_rpc_duration_seconds_count{method=\""+method+"\"} 1\n") {
+			t.Fatalf("missing RPC count: %s", metrics)
+		}
+		prefix := "fable_job_rpc_duration_seconds_sum{method=\"" + method + "\"} "
+		found := false
+		for _, line := range strings.Split(metrics, "\n") {
+			if strings.HasPrefix(line, prefix) {
+				found = true
+				value, err := strconv.ParseFloat(strings.TrimPrefix(line, prefix), 64)
+				if err != nil || value <= 0 {
+					t.Fatal("duration not observed", line)
+				}
+			}
+		}
+		if !found {
+			t.Fatal("missing RPC duration sum", metrics)
+		}
+	}
+	for _, private := range []string{listener.Addr().String(), "private backend", "secret", "foreign"} {
+		if strings.Contains(metrics, private) {
+			t.Fatal("unbounded/private RPC label", metrics)
+		}
 	}
 }

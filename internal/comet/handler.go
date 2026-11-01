@@ -96,6 +96,7 @@ func NewHandler(hub *Hub, logic pb.LogicServiceClient, c HandlerConfig) (http.Ha
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 		fmt.Fprintf(w, "fable_comet_connections_active %d\nfable_comet_connections_accepted_total %d\nfable_comet_connections_rejected_total %d\nfable_comet_connect_uncertain_total %d\nfable_comet_heartbeat_failures_total %d\n", h.active.Load(), h.accepted.Load(), h.rejected.Load(), h.uncertain.Load(), h.heartbeatFailures.Load())
+		hub.writeMetrics(r.Context(), w)
 	})
 	return mux, nil
 }
@@ -304,6 +305,8 @@ func queueControl(ctx context.Context, c *Connection, control socketControl) err
 	case c.controls <- control:
 		return nil
 	default:
+		c.hub.queueFull.Add(1)
+		c.markSlow()
 		_, _ = c.hub.Unregister(context.Background(), c.identity)
 		return ErrClosed
 	}
@@ -322,7 +325,7 @@ func (h *publicHandler) read(ctx context.Context, c *Connection, socket *websock
 		if protocol == ProtocolV2 {
 			var f im.SendFrame
 			e = strictJSON(raw, &f)
-			req = &pb.SubmitMessageRequest{Identity: c.Identity(), ClientMessageId: f.ClientMessageID, Destination: &pb.Destination{ReceiveId: f.ReceiveID}, Content: f.Content}
+			req = &pb.SubmitMessageRequest{RequestId: uuid.NewString(), Identity: c.Identity(), ClientMessageId: f.ClientMessageID, Destination: &pb.Destination{ReceiveId: f.ReceiveID}, Content: f.Content}
 			switch f.ReceiveType {
 			case im.ReceiveTypeUser:
 				req.Destination.ReceiveType = pb.ReceiveType_RECEIVE_TYPE_USER
@@ -340,7 +343,7 @@ func (h *publicHandler) read(ctx context.Context, c *Connection, socket *websock
 			if f.SendID != c.identity.UserId || f.Origin != 0 {
 				e = ErrInvalid
 			}
-			req = &pb.SubmitMessageRequest{Identity: c.Identity(), ClientMessageId: uuid.NewString(), Destination: &pb.Destination{ReceiveId: f.ReceiveID}, Content: f.Content}
+			req = &pb.SubmitMessageRequest{RequestId: uuid.NewString(), Identity: c.Identity(), ClientMessageId: uuid.NewString(), Destination: &pb.Destination{ReceiveId: f.ReceiveID}, Content: f.Content}
 			switch f.ReceiveType {
 			case 0:
 				req.Destination.ReceiveType = pb.ReceiveType_RECEIVE_TYPE_USER

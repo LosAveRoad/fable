@@ -34,6 +34,7 @@ type socketLogic struct {
 	submitErr                      error
 	leaseDuration                  time.Duration
 	last                           *pb.SubmitMessageRequest
+	requests                       []*pb.SubmitMessageRequest
 }
 
 func (s *socketLogic) Connect(ctx context.Context, r *pb.ConnectRequest) (*pb.ConnectResponse, error) {
@@ -83,6 +84,7 @@ func (s *socketLogic) SubmitMessage(_ context.Context, r *pb.SubmitMessageReques
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.submits++
+	s.requests = append(s.requests, proto.Clone(r).(*pb.SubmitMessageRequest))
 	if s.submitErr != nil {
 		return nil, s.submitErr
 	}
@@ -673,5 +675,126 @@ func TestHandlerRejectsInvalidRawUTF8BeforeDecoding(t *testing.T) {
 				time.Sleep(time.Millisecond)
 			}
 		})
+	}
+}
+
+func TestSocketSubmitHasFreshRequestIDForEachAttempt(t *testing.T) {
+	for _, protocol := range []string{"v2", "legacy"} {
+		t.Run(protocol, func(t *testing.T) {
+			s := &socketLogic{}
+			_, url := handlerFixture(t, s)
+			c, _, err := dialSocket(t, url+"?protocol="+protocol, socketJWT(t, time.Hour))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer c.Close()
+			id := "70000000-0000-4000-8000-000000000001"
+			for attempt := 0; attempt < 2; attempt++ {
+				if protocol == "v2" {
+					err = c.WriteJSON(im.SendFrame{Event: im.EventSendMessage, ClientMessageID: id, ReceiveID: testTarget("2").UserId, ReceiveType: im.ReceiveTypeUser, Content: "private text"})
+				} else {
+					err = c.WriteJSON(map[string]any{"send_id": testTarget("1").UserId, "receive_id": testTarget("2").UserId, "receive_type": 0, "content": "private text"})
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if protocol == "v2" {
+					c.SetReadDeadline(time.Now().Add(time.Second))
+					var frame im.SendResultFrame
+					if err = c.ReadJSON(&frame); err != nil {
+						t.Fatal(err)
+					}
+					if frame.ClientMessageID != id || (attempt == 0 && frame.Result == nil) || (attempt == 1 && frame.Error == nil) {
+						t.Fatalf("bad result: %+v", frame)
+					}
+				}
+				until := time.Now().Add(time.Second)
+				for {
+					s.mu.Lock()
+					n := len(s.requests)
+					s.mu.Unlock()
+					if n > attempt {
+						break
+					}
+					if time.Now().After(until) {
+						t.Fatal("missing RPC attempt")
+					}
+					time.Sleep(time.Millisecond)
+				}
+				s.mu.Lock()
+				s.submitErr = status.Error(codes.PermissionDenied, "destination rejected")
+				s.mu.Unlock()
+			}
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			a, b := s.requests[0], s.requests[1]
+			if !validUUID(a.RequestId) || !validUUID(b.RequestId) || a.RequestId == b.RequestId {
+				t.Fatalf("missing fresh canonical request IDs: %q %q", a.RequestId, b.RequestId)
+			}
+			if protocol == "v2" && (a.ClientMessageId != id || b.ClientMessageId != id) {
+				t.Fatal("retry identity changed")
+			}
+		})
+	}
+}
+
+func TestHubCongestionMetricsObserveActualTransitions(t *testing.T) {
+	h := testHub(t, 1)
+	handler, err := NewHandler(h, pb.NewLogicServiceClient(nil), HandlerConfig{JWTSecret: socketKey, LogicToken: strings.Repeat("c", 32), AllowedOrigins: []string{"http://localhost:5173"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	metrics := func() string {
+		r := httptest.NewRecorder()
+		handler.ServeHTTP(r, httptest.NewRequest("GET", "/metrics", nil))
+		return r.Body.String()
+	}
+	require := func(want string) {
+		t.Helper()
+		if got := metrics(); !strings.Contains(got, want+"\n") {
+			t.Fatalf("missing %s in %s", want, got)
+		}
+	}
+	c := register(t, h, testTarget("1"))
+	deliver(t, h, c.Identity())
+	require("fable_comet_queue_depth 1")
+	stale := c.Identity()
+	stale.ConnectionId = "20000000-0000-4000-8000-000000000099"
+	deliver(t, h, stale)
+	require("fable_comet_stale_targets_total 1")
+	deliver(t, h, c.Identity())
+	waitClosed(t, c)
+	require("fable_comet_queue_full_total 1")
+	require("fable_comet_slow_closes_total 1")
+	require("fable_comet_queue_depth 0")
+	other := register(t, h, testTarget("2"))
+	if err := queueControl(context.Background(), other, socketControl{kind: websocket.PingMessage}); err != nil {
+		t.Fatal(err)
+	}
+	require("fable_comet_queue_depth 1")
+	if err := queueControl(context.Background(), other, socketControl{kind: websocket.PingMessage}); err == nil {
+		t.Fatal("full control queue accepted")
+	}
+	require("fable_comet_queue_full_total 2")
+	require("fable_comet_slow_closes_total 2")
+	if _, err := h.Drain(context.Background(), time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	require("fable_comet_draining 1")
+	if _, err := h.Register(context.Background(), testTarget("3")); err != ErrDraining {
+		t.Fatal("drain admitted connection", err)
+	}
+}
+
+func TestClosedHubMetricsDoNotInventQueueDepth(t *testing.T) {
+	h := testHub(t, 1)
+	h.Close()
+	var output strings.Builder
+	h.writeMetrics(context.Background(), &output)
+	if strings.Contains(output.String(), "fable_comet_queue_depth") {
+		t.Fatal("unavailable depth reported as measured", output.String())
+	}
+	if !strings.Contains(output.String(), "fable_comet_queue_full_total 0\n") {
+		t.Fatal("counters unavailable after close")
 	}
 }
