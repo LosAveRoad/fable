@@ -78,13 +78,20 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/chat-server/package-lock.json
+
       - name: Download dependencies
         run: go mod download
 
       - name: Check formatting
         shell: bash
         run: |
-          files=$(git ls-files "internal/integration/*.go" "internal/service/chatservice/*.go" "internal/comet/*.go" "internal/job/*.go" "internal/logic/*.go" "internal/logic/**/*.go" "internal/httpdocs/*.go" "internal/https_server/*.go" "internal/mcpserver/*.go" "internal/mcpserver/**/*.go" "cmd/logic/*.go" "cmd/httpdocs/*.go" "api/gen/**/*.go" | xargs gofmt -l)
+          files=$(git ls-files "internal/integration/*.go" "internal/service/chatservice/*.go" "internal/comet/*.go" "internal/comet/**/*.go" "internal/job/*.go" "internal/job/**/*.go" "internal/logic/*.go" "internal/logic/**/*.go" "internal/localdev/*.go" "internal/e2e/*.go" "internal/httpdocs/*.go" "internal/https_server/*.go" "internal/mcpserver/*.go" "internal/mcpserver/**/*.go" "cmd/**/*.go" "api/gen/**/*.go" | xargs gofmt -l)
           if [ -n "$files" ]; then
             echo "These files are not formatted:"
             echo "$files"
@@ -95,13 +102,61 @@ jobs:
         run: sh scripts/check-httpdocs.sh
 
       - name: Run unit tests
-        run: go test ./...
+        run: go test -p 1 ./...
+
+      - name: Vet Go packages
+        run: go vet -p 1 ./...
 
       - name: Check Comet and Job concurrency
-        run: go test -race ./internal/comet ./internal/job
+        run: go test -p 1 -race ./internal/comet/... ./internal/job/...
+
+      - name: Check local ingress and lifecycle
+        run: |
+          node --test deploy/local/proxy.test.mjs
+          python3 -m unittest discover -s scripts/local -p 'test_*.py'
+          FABLE_LOCAL_MYSQL_PASSWORD=compose-validation-only docker compose -f deploy/local/infra.yml config --quiet
+
+      - name: Verify browser state and production build
+        working-directory: web/chat-server
+        run: |
+          npm ci --no-audit --no-fund
+          npm test
+          npm run build
 
       - name: Run integration tests
         run: go test -tags=integration -count=1 -v ./internal/integration
 
-      - name: Verify Logic with real MySQL Redis and Kafka
-        run: go test -p 1 -race -tags='integration mysql' -count=1 ./internal/logic/...
+      - name: Verify real backend boundaries
+        run: go test -p 1 -race -tags='integration mysql' -count=1 -timeout=180s ./internal/logic/... ./internal/job/... ./internal/localdev
+
+      - name: Verify two Logic two Comet two Job topology
+        env:
+          FABLE_E2E_ARTIFACT_DIR: ${{ runner.temp }}/fable-e2e-logs
+        run: ./scripts/smoke.sh -timeout=240s
+
+      - name: Verify managed Compose startup and selected deployment smoke
+        env:
+          FABLE_LOCAL_RUNTIME_DIR: ${{ runner.temp }}/fable-managed
+          FABLE_LOCAL_PORT_BASE: "20080"
+        run: |
+          ./scripts/dev-up.sh --skip-web
+          ./scripts/dev-status.sh
+          python3 scripts/local/manage.py smoke
+          ./scripts/dev-up.sh --skip-web
+
+      - name: Stop managed local topology
+        if: always()
+        env:
+          FABLE_LOCAL_RUNTIME_DIR: ${{ runner.temp }}/fable-managed
+        run: ./scripts/dev-down.sh --infra
+
+      - name: Preserve role logs for diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fable-role-logs
+          path: |
+            ${{ runner.temp }}/fable-managed/*.log
+            ${{ runner.temp }}/fable-e2e-logs/**/*.log
+          if-no-files-found: ignore
+          retention-days: 7
