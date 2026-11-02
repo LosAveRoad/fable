@@ -56,17 +56,18 @@ powershell -ExecutionPolicy Bypass -File .\scripts\test.ps1
 
 ## CI 与结果边界
 
-[CI](../.github/workflows/ci.yml) 使用 MySQL 8.4、Redis 7.4、Kafka 3.9，执行格式与 HTTP 生成物检查、全量 Go 单测与 vet、Comet/Job race、旧单体业务回归、真实后端 race、前端状态测试与生产构建、本地入口和生命周期测试，以及下面的完整三角色验收。另起一套托管 Compose 验证 dev-up、status、选定环境 smoke、重复 up 和退出。
+[CI](../.github/workflows/ci.yml) 使用 MySQL 8.4、Redis 7.4、Kafka 3.9，执行格式、固定 protoc 33.4 的 Proto 漂移检查与 HTTP 生成物检查、全量 Go 单测与 vet、Comet/Job race、旧单体业务回归、真实后端 race、前端状态测试与生产构建、本地入口和生命周期测试，以及下面的完整三角色验收。另起一套托管 Compose 验证 dev-up、status、选定环境 smoke、重复 up，再运行公开 HTTP/WS/MCP 黑盒流程与两对用户的短时消息负载，最后始终退出拓扑。
 
-CI 失败只保存角色日志，不上传含凭据的 private.json 或生成配置。测试证明本地多进程的正确性，不代表 Kubernetes、跨主机安全、基础设施容灾或容量验收；压测另见[压测说明](../tests/load/README.md)，需保存实际运行证据。
+CI 保存公开黑盒与负载 JSON 报告，以及仅含安全关联字段的 Logic/Comet/Job 角色日志；不上传含凭据的 private.json 或生成配置。测试证明本地多进程的正确性，不代表 Kubernetes、跨主机安全、基础设施容灾或容量验收；压测另见[压测说明](../tests/load/README.md)，需保存实际运行证据。
 
 ## 三角色后端验证
 
 新 Logic 使用独立新空库，示例配置 `config/logic.example.toml`；显式创建数据库后运行 `go run ./cmd/logic -config config/logic.example.toml init-schema`，正常运行使用 `serve`。初始化拒绝已有表，服务启动只检查结构。JWT、Job/Kick Token、逐 Comet 的 instance/boot/address/token 授权由环境提供，不把示例占位符用于真实服务。Kafka `fable.push.v1` 须由运维脚本/管理命令显式创建（首期 6 分区），Producer 不自动建 Topic。
 
-HTTP 文档生成和漂移检查：
+Proto 和 HTTP 文档生成、漂移检查（Proto 要求 protoc 33.4；脚本固定 Go 插件版本）：
 
 ```sh
+sh scripts/generate-proto.sh --check
 go run ./cmd/httpdocs
 sh scripts/check-httpdocs.sh
 node --test .github/scripts/check-docs.test.cjs
@@ -87,7 +88,7 @@ Logic 集成测试使用实际 MySQL、Redis、TCP Logic 和两个真实 Comet R
 
 ## 完整本地拓扑验收
 
-开发启动与运维命令见[本地部署](../deploy/local/README.md)。以下两种 smoke 各有用途：
+开发启动与运维命令见[本地部署](../deploy/local/README.md)。对已运行入口的独立公共流程测试与负载测量见[黑盒与压测命令](../tests/load/README.md)，该驱动不访问数据库、Redis、Kafka 或内部 RPC。以下两种 smoke 各有用途：
 
 | 入口 | 验证对象 | 数据范围 |
 | --- | --- | --- |

@@ -20,7 +20,7 @@ Fable 是参考 goim 职责划分的 Go 聊天学习项目。Logic 处理 HTTP/M
 ./scripts/dev-down.sh --infra  # 同时停止本轮 Compose 服务，保留数据卷
 ```
 
-也可分别运行 `cmd/logic`、`cmd/comet`、`cmd/job`；配置与服务凭据必须匹配，不把示例占位符用于真实环境。Kubernetes、跨主机 TLS、基础设施高可用与远程发布不在本阶段范围；旧 K8s/CD 材料不能用于运行新拓扑。
+也可分别运行 `cmd/logic`、`cmd/comet`、`cmd/job`；配置与服务凭据必须匹配，不把示例占位符用于真实环境。AKS 交付正在准备，测试依赖计划一并运行在 AKS；当前尚无 Azure 订阅，未创建云资源或完成云端部署、压测。跨主机安全与运行结果须经实际部署验证。
 
 ## 文档与验证
 
@@ -38,18 +38,19 @@ Fable 是参考 goim 职责划分的 Go 聊天学习项目。Logic 处理 HTTP/M
 go test -p 1 ./...
 go vet -p 1 ./...
 go test -p 1 -race ./internal/comet/... ./internal/job/...
+sh scripts/generate-proto.sh --check
 sh scripts/check-httpdocs.sh
 npm --prefix web/chat-server test
 npm --prefix web/chat-server run build
 ```
 
-真实后端与多进程冒烟需要专用测试依赖，具体环境变量见测试环境。不能以 mock 通过、Kafka ACK 或 healthz 代替完整链路验收。
+Proto 漂移检查要求 protoc 33.4，生成插件版本固定于脚本。真实后端与多进程冒烟需要专用测试依赖，具体环境变量见测试环境。公开 HTTP/WS/MCP 黑盒流程与实际消息负载命令见[压测与黑盒说明](tests/load/README.md)，不能以 mock 通过、Kafka ACK 或 healthz 代替完整链路验收。
 
-## 学习与旧环境
+## 维护与验证边界
 
 架构和业务决策由项目作者审核；AI 可辅助实现、测试、解释和审查，合并前应能够说明数据流、失败语义及代码取舍。参考实现的能力不自动成为本项目的能力，性能数据只能来自实际测量。
 
-旧 `cmd/my_chat_server` 及旧前端构建/部署样例保留为隔离回归参照，不与新拓扑共用消息数据库、路由前缀或旧 Kafka 命令 Topic。旧规划和分析可查[历史文档快照](https://github.com/LosAveRoad/fable/tree/2d85cdbf1f229deb4fa17518ff7a1c419a08a893/docs)，不作为当前契约。
+CI 继续保留隔离的既有业务回归，执行方式与数据清理边界见测试环境。旧部署材料已移除；旧规划和分析可查[历史文档快照](https://github.com/LosAveRoad/fable/tree/2d85cdbf1f229deb4fa17518ff7a1c419a08a893/docs)，不作为当前契约。
 
 ## License
 
