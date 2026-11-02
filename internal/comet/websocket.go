@@ -20,6 +20,13 @@ const (
 	ProtocolV2     Protocol = "v2"
 )
 
+type socketControl struct {
+	frame      any
+	kind       int
+	data       []byte
+	closeAfter bool
+}
+
 var ErrWriterAttached = errors.New("connection already has a websocket writer")
 
 // WriteTo takes ownership of a socket after validation. The caller remains
@@ -66,6 +73,30 @@ func (c *Connection) WriteTo(ctx context.Context, socket *websocket.Conn, protoc
 			return ctx.Err()
 		case <-c.done:
 			return nil
+		case control := <-c.controls:
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			select {
+			case <-c.done:
+				return nil
+			default:
+			}
+			if err := socket.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
+				return err
+			}
+			var err error
+			if control.kind != 0 {
+				err = socket.WriteMessage(control.kind, control.data)
+			} else if protocol == ProtocolV2 {
+				err = socket.WriteJSON(control.frame)
+			}
+			if err != nil {
+				return err
+			}
+			if control.closeAfter {
+				return nil
+			}
 		case message := <-c.outbound:
 			if err := ctx.Err(); err != nil {
 				return err

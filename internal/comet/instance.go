@@ -68,6 +68,15 @@ func StartInstance(ctx context.Context, hub *Hub, logic InstanceLogicClient, add
 	}
 	lifetime, cancel := context.WithCancel(ctx)
 	i := &Instance{hub: hub, logic: logic, address: address, token: token, interval: options.RenewInterval, rpcTimeout: options.RPCTimeout, cancel: cancel, done: make(chan struct{})}
+	// Hub shutdown must interrupt an in-flight registration/renewal, rather
+	// than waiting for its RPC budget to expire.
+	go func() {
+		select {
+		case <-hub.done:
+			cancel()
+		case <-lifetime.Done():
+		}
+	}()
 	rpcCtx, stop := i.rpcContext(lifetime, time.Time{})
 	reply, err := logic.RegisterComet(rpcCtx, &pb.RegisterCometRequest{Identity: hub.Identity(), RpcAddress: address})
 	stop()
@@ -115,6 +124,7 @@ func (i *Instance) Done() <-chan struct{} { return i.done }
 func (i *Instance) Err() error            { i.mu.RLock(); defer i.mu.RUnlock(); return i.err }
 func (i *Instance) Close()                { i.cancel(); <-i.done }
 func (i *Instance) run(ctx context.Context) {
+	defer i.cancel()
 	failure := ErrInstanceStopped
 	defer func() {
 		i.mu.Lock()

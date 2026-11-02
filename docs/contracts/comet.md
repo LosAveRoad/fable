@@ -1,6 +1,6 @@
 # Comet 角色契约
 
-状态：架构已接受；本地投递内核、WebSocket 写出、gRPC 适配与实例租约客户端已实现，尚未接入独立进程与真实 Logic。Owner 为仓库维护者，修改连接和投递行为的 PR 作者同步本文。方法及字段以 [comet.proto](../../api/proto/fable/v1/comet.proto) 和 [DTO / RPC spec](../../api/proto/README.md) 为准。
+状态：独立 Comet、公开 WebSocket 接入、用户连接与实例租约、定向 RPC 已实现，并已与真实 Logic 联调。Owner 为仓库维护者，修改连接和投递行为的 PR 作者同步本文。方法及字段以 [comet.proto](../../api/proto/fable/v1/comet.proto) 和 [DTO / RPC spec](../../api/proto/README.md) 为准。
 
 本文长期保留，作为写 Comet 代码前的连接生命周期与协作参考；不因 `.proto` 存在而删除。RPC 字段及局部语义维护在 `.proto`/注释，职责或连接行为变化时同步本文。
 
@@ -8,11 +8,11 @@
 
 [internal/comet](../../internal/comet) 提供单所有者 Hub、有界连接队列和精确身份注销。`Register` 是进程内接入边界，要求调用方先完成真实身份/路由注册；重复注册相同身份返回同一连接对象。`Deliver` 返回逐目标入队结果，慢连接队列满则关闭；不提供接收持久 ACK 或持久去重，客户端仍须按 message_id 合并。
 
-`Connection.WriteTo` 独占一个 WebSocket 写端，支持 legacy 与 v2 消息输出、取消和连接关闭；读取、鉴权、发送确认、Logic 注册/续租与 JWT 到期处理尚未接入。它不是可公开访问的 `/wss` Handler，不接受测试替身充当真实授权。
+`NewHandler` 提供 `/wss`，在产生路由副作用前检查握手、JWT、Origin 和协议；Logic Connect 再次鉴权。只有 Connect 成功才把连接加入可投递 Hub 并开始读业务帧；不确定响应不自动重试，关闭并精确条件清理。`Connection.WriteTo` 是应用数据、发送结果和正常 Ping/Pong 的唯一写协程。Gorilla 在协议错误或帧超限时可能直接写致命 Close 控制帧；这是该库明确支持的并发控制写例外，不是第二个应用数据写协程。
 
-`NewRPCService` 在每个方法内部检查独立凭据：Job 只能 Deliver、Logic 只能 Kick、Admin 只能 Drain；空、短或相同凭据拒绝创建服务。角色不能通过省略 interceptor 绕过认证。请求还必须匹配本机 instance/boot。当前没有新增监听端口，部署入口后续提供受控网络与 TLS 配置。
+`NewRPCService` 在每个方法内部检查独立凭据：Job 只能 Deliver、Logic 只能 Kick、Admin 只能 Drain；空、短或相同凭据拒绝创建服务。角色不能通过省略 interceptor 绕过认证。请求还必须匹配本机 instance/boot。独立入口先监听 RPC，再以配置中的精确地址向 Logic 注册；首期监听与目标地址限回环，跨主机 TLS 不属于当前开发部署。
 
-`Drain` 立即停止新注册，允许截止前继续投递，最迟 30 秒内关闭已有连接，重复调用不能延长截止时间。旧 `chatservice` 与当前业务入口保持原实现；本轮没有独立 Comet、Logic 或 Job 可执行程序，也不能据此宣称三角色聊天已经可运行。
+`Drain` 立即停止新注册，允许截止前继续投递，最迟 30 秒内关闭已有连接，重复调用不能延长截止时间。入口为 [cmd/comet](../../cmd/comet)，配置见 [comet.example.toml](../../config/comet.example.toml)。`/healthz`、`/readyz` 与 `/metrics` 分别表示存活、实例就绪和有界连接指标。旧 `chatservice` 仅保留为隔离回归入口，不接入新消息数据库。
 
 ## 实例租约客户端
 
@@ -22,7 +22,7 @@
 
 Hub 的 Drain（包括现有管理 RPC）立即使实例 not ready，并通知租约协程尽快上报 draining=true；已开始的 active 续租响应不能清除本机 draining 状态。Ready 还检查当前时钟和 Hub 状态，不能以旧成功响应冒充仍有效。`Close` 幂等，先关闭本机连接，再尽力条件注销，完成后关闭 Done；Err 返回安全的停止/租约失效类别，不透传上游敏感错误。注销失败仍依赖 TTL 清理。
 
-本轮没有用户 Connect/Heartbeat/Disconnect、JWT/公开 WebSocket Handler 或进程启动入口。这里维护的是实例租约；每用户连接租约仍须单独实现。隔离测试服务器只验证 RPC 边界，不替代真实 Logic，也不作为可用的开发聊天服务。
+实例租约与每用户连接租约分别维护。用户 Heartbeat 使用当前身份四元组，按 JWT/租约截止前 5 秒停止服务；权威 SUPERSEDED、身份过期等终结错误立即关闭精确连接，普通业务成员权限拒绝不误关其他有效会话。Ping/读期限清理无响应客户端；断线后尽力 Disconnect，超时依赖 TTL。关闭先停止并排空 Handler，再关闭实例与 RPC 客户端。
 
 ## 职责与依赖
 
@@ -75,4 +75,4 @@ RPC 完成前通过带有结果回传的 Hub 命令确认实际连接检查/入�
 
 ## 交付与验证
 
-独立 Comet、Kafka 联调与前端协议适配可以按可验证边界拆分，不固定 PR 编号；只有对端就绪且测试通过才能接入实际链路。验证重复 Kick、旧 Disconnect 不删新路由、pending 阶段投递、客户端取消、慢连接、JWT 到期、租约丢失、Drain 和 legacy 协议。Comet 不承担客户端消息历史缓存。
+交付可以按可验证边界拆分，不固定 PR 编号。验证覆盖重复 Kick、旧 Disconnect 不删新路由、pending 阶段投递、客户端取消、慢连接、JWT 到期、租约丢失、Drain、legacy/v2、原始 UTF-8 拒绝和终结发送错误后的连接关闭。应用正文解码后最多 16 KiB，编码帧最多 128 KiB 以容纳 JSON 转义；Comet 不承担客户端消息历史缓存。

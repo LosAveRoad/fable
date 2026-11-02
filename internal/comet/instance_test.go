@@ -362,3 +362,33 @@ func TestInvalidRenewalClosesWithoutReregistration(t *testing.T) {
 		t.Fatal(i.Err())
 	}
 }
+
+func TestHubCloseCancelsInflightInstanceRenewalPromptly(t *testing.T) {
+	s := newInstanceLogic()
+	entered := make(chan struct{})
+	cancelled := make(chan struct{})
+	s.renew = func(ctx context.Context, _ *pb.RenewCometRequest) (*pb.RenewCometResponse, error) {
+		close(entered)
+		<-ctx.Done()
+		close(cancelled)
+		return nil, status.FromContextError(ctx.Err()).Err()
+	}
+	h := testHub(t, 2)
+	i, e := StartInstance(context.Background(), h, logicPair(t, s), "127.0.0.1:9091", cometToken, InstanceOptions{RenewInterval: time.Millisecond})
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer i.Close()
+	<-entered
+	h.Close()
+	select {
+	case <-cancelled:
+	case <-time.After(150 * time.Millisecond):
+		t.Fatal("closed hub left renewal RPC running")
+	}
+	select {
+	case <-i.Done():
+	case <-time.After(150 * time.Millisecond):
+		t.Fatal("closed hub did not stop instance promptly")
+	}
+}
