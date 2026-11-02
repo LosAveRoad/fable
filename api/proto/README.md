@@ -16,6 +16,8 @@ RPC 直接使用生成的 [mychat/api/gen/fable/v1](../gen/fable/v1) 类型，�
 
 三个角色契约长期保留，作为实施前的职责和协作参考；它们不承担逐字段 Schema 的另一份维护。RPC spec 维护在 `.proto` 和就近注释中；角色边界、调用目的、业务前置条件或跨角色流程变化时才同步角色文档。HTTP 维护按以下 code-first 规则进行。
 
+浏览器客户端已使用显式 `protocol=v2`，按 message_id 合并实时帧、保存结果与权威同步页。64 位位置用字符串和 BigInt 比较；同步游标仅由成功合并的分页推进。重试保留原 client_message_id、内容和目标，保存不确定状态不展示为确定失败。状态与传输逻辑及其测试位于 [web/chat-server/src](../../web/chat-server/src)，本地验证使用 `npm test` 与 `npm run build`，不手工维护第二份帧字段清单。
+
 ## HTTP：code-first
 
 HTTP 文档从实际路由注册、Handler、请求/响应 DTO、校验标签和代码中的接口注释生成，不以手写 Markdown 或 YAML 作为另一份接口定义。生成工具不能凭 Go 类型推断鉴权、条件校验和全部错误分支；这些语义在 Handler 附近显式记录，并由契约测试核对。代码及受测行为为事实来源，生成结果用于阅读和评审。

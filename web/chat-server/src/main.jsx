@@ -15,6 +15,8 @@ import {
 } from "lucide-react";
 import "./styles.css";
 import logoUrl from "../fable-im-logo.png";
+import { ChatClient } from "./chat-client.js";
+import { conversationFromSession } from "./chat-state.js";
 
 const API = import.meta.env.VITE_API_BASE || "";
 const WS =
@@ -63,7 +65,11 @@ function Auth({ onLogin }) {
       if (register) {
         setRegister(false);
         setError("Account created — you can log in now.");
-      } else onLogin(result.token || result.Token);
+      } else {
+        const token = result.token || result.Token;
+        if (!token) throw Error("Login did not return a token");
+        onLogin(token);
+      }
     } catch (e) {
       setError(e.message);
     } finally {
@@ -128,67 +134,74 @@ function Chat({ token, onLogout }) {
   const [me, setMe] = useState(null),
     [sessions, setSessions] = useState([]),
     [current, setCurrent] = useState(null),
-    [messages, setMessages] = useState([]),
-    [connected, setConnected] = useState(false),
+    [view, setView] = useState({ messages: [], connected: false, syncing: false, authRequired: false }),
     [error, setError] = useState(""),
     [peer, setPeer] = useState(""),
     [mobileOpen, setMobileOpen] = useState(false);
-  const socket = useRef(null);
+  const client = useRef(null), alive = useRef(false), requests = useRef(null), listVersion = useRef(0);
+  const userID = uuidFrom(token);
+  const { messages, connected, syncing, authRequired } = view;
   useEffect(() => {
+    alive.current = true;
+    const controller = new AbortController();
+    requests.current = controller;
+    const live = new ChatClient({
+      userID, token, wsBase: WS,
+      fetchPage: (conversation, cursor, signal) => {
+        const query = new URLSearchParams({ conversation_id: conversation, cursor, limit: "100" });
+        return api(`/api/v2/messages/sync?${query}`, token, { signal });
+      },
+      onChange: snapshot => { if (alive.current) setView(snapshot); },
+      onError: message => { if (alive.current) setError(message); },
+    });
+    client.current = live;
+    live.start();
     (async () => {
       try {
         const user = await api("/user/getUserInfo", token, {
           method: "POST",
-          body: JSON.stringify({ uuid: uuidFrom(token) }),
+          body: JSON.stringify({ uuid: userID }),
+          signal: controller.signal,
         });
+        if (!alive.current) return;
         setMe(user);
         await refresh();
       } catch (e) {
-        setError(e.message);
+        if (alive.current && !controller.signal.aborted) setError(e.message);
       }
     })();
-    return () => socket.current?.close();
-  }, []);
+    return () => {
+      alive.current = false;
+      controller.abort();
+      live.dispose();
+    };
+  }, [token]);
   const refresh = async () => {
+    const version = ++listVersion.current;
     try {
-      const r = await api("/session/getUserSessionList", token, {
+      const options = {
         method: "POST",
         body: "{}",
-      });
-      setSessions(Array.isArray(r) ? r : r.list || r.sessions || []);
+        signal: requests.current?.signal,
+      };
+      const results = await Promise.all([
+        api("/session/getUserSessionList", token, options),
+        api("/session/getGroupSessionList", token, options),
+      ]);
+      if (!alive.current || version !== listVersion.current) return;
+      const list = results.flatMap(r => Array.isArray(r) ? r : r.list || r.sessions || []);
+      setSessions(list.filter(s => conversationFromSession(s)));
     } catch (e) {
-      setError(e.message);
+      if (alive.current && !requests.current?.signal.aborted) setError(e.message);
     }
   };
-  const select = async (s) => {
-    const id = s.peer_uuid || s.PeerUUID || s.user_id;
-    setCurrent({ ...s, user_id: id });
+  const select = (session) => {
+    const conversation = conversationFromSession(session);
+    if (!conversation) return;
+    setCurrent({ ...session, ...conversation, user_id: conversation.receive_id });
     setMobileOpen(false);
-    try {
-      const r = await api("/message/getMessageList", token, {
-        method: "POST",
-        body: JSON.stringify({ user_one_id: me.uuid, user_two_id: id }),
-      });
-      setMessages(Array.isArray(r) ? r : r.list || r.messages || []);
-      socket.current?.close();
-      const ws = new WebSocket(`${WS}/wss?token=${encodeURIComponent(token)}`);
-      socket.current = ws;
-      ws.onopen = () => setConnected(true);
-      ws.onclose = () => setConnected(false);
-      ws.onerror = () => setError("Live connection failed");
-      ws.onmessage = (e) => {
-        const item = JSON.parse(e.data);
-        if (
-          (item.send_id === id && item.receive_id === me.uuid) ||
-          (item.origin === 1 &&
-            item.send_id === me.uuid &&
-            item.receive_id === id)
-        )
-          setMessages((x) => [...x, item]);
-      };
-    } catch (e) {
-      setError(e.message);
-    }
+    setError("");
+    client.current?.select(conversation);
   };
   const open = async (e) => {
     e.preventDefault();
@@ -197,28 +210,34 @@ function Chat({ token, onLogout }) {
       await api("/session/openSession", token, {
         method: "POST",
         body: JSON.stringify({ peer_uuid: peer }),
+        signal: requests.current?.signal,
       });
+      if (!alive.current) return;
       setPeer("");
       await refresh();
     } catch (e) {
-      setError(e.message);
+      if (alive.current && !requests.current?.signal.aborted) setError(e.message);
     }
   };
   const send = (e) => {
     e.preventDefault();
     const input = e.currentTarget.elements.content,
       content = input.value.trim();
-    if (!content || !current || socket.current?.readyState !== WebSocket.OPEN)
-      return;
-    socket.current.send(
-      JSON.stringify({
-        send_id: me.uuid,
-        receive_id: current.user_id,
-        content,
-      }),
-    );
-    setMessages((x) => [...x, { send_id: me.uuid, content }]);
-    input.value = "";
+    if (!content || !current) return;
+    try {
+      client.current.send(content);
+      input.value = "";
+    } catch (e) { setError(e.message); }
+  };
+  const retry = (id) => {
+    try { client.current?.retry(id); }
+    catch (e) { setError(e.message); }
+  };
+  const logout = () => {
+    alive.current = false;
+    requests.current?.abort();
+    client.current?.dispose();
+    onLogout();
   };
   return (
     <div className="app-shell">
@@ -253,19 +272,19 @@ function Chat({ token, onLogout }) {
         </div>
         <div className="sessions">
           {sessions.map((s, i) => {
-            const id = s.peer_uuid || s.PeerUUID || s.user_id;
+            const conversation = conversationFromSession(s), id = conversation.receive_id;
             return (
               <button
-                key={id || i}
+                key={conversation.id || i}
                 className={
-                  current?.user_id === id ? "session active" : "session"
+                  current?.id === conversation.id ? "session active" : "session"
                 }
                 onClick={() => select(s)}
               >
                 <span className="avatar">{id?.slice(-2) || "?"}</span>
                 <span>
                   <b>{id}</b>
-                  <small>Private conversation</small>
+                  <small>{conversation.receive_type === "group" ? "Group conversation" : "Private conversation"}</small>
                 </span>
               </button>
             );
@@ -282,7 +301,7 @@ function Chat({ token, onLogout }) {
             <ArrowLeft size={17} className="flip" />
           </button>
         </form>
-        <button className="logout" onClick={onLogout}>
+        <button className="logout" onClick={logout}>
           <LogOut size={16} /> Log out
         </button>
       </aside>
@@ -304,11 +323,11 @@ function Chat({ token, onLogout }) {
                 {current ? (
                   connected ? (
                     <>
-                      <Wifi size={12} /> Live now
+                      <Wifi size={12} /> {syncing ? "Syncing history…" : "Live now"}
                     </>
                   ) : (
                     <>
-                      <WifiOff size={12} /> Connecting…
+                      <WifiOff size={12} /> {authRequired ? "Sign in again" : "Connecting…"}
                     </>
                   )
                 ) : (
@@ -317,24 +336,38 @@ function Chat({ token, onLogout }) {
               </span>
             </div>
           </div>
+          {current && <button className="icon-button sync-history" aria-label="Sync history"
+            title="Check saved history" onClick={() => client.current?.sync()} disabled={!connected || syncing}>
+            <RefreshCw size={16} />
+          </button>}
         </header>
         <div className="messages">
           {current ? (
-            messages.map((m, i) => (
+            messages.map((m) => (
               <div
-                key={i}
+                key={m.message_id || m.client_message_id}
                 className={
-                  (m.send_id || m.from) === me?.uuid
+                  m.send_id === userID
                     ? "message mine"
                     : "message"
                 }
               >
-                <div>{m.content || m.message}</div>
-                {m.origin === 1 && (
+                <div className="message-content">{m.content}</div>
+                {m.origin === "ai" && (
                   <small>
                     <Sparkles size={12} /> AI assisted
                   </small>
                 )}
+                {m.status ? <small role="status">
+                  {m.status === "pending" ? "Sending…" : "Save unconfirmed"}
+                  {m.error && ` · ${m.error.replaceAll("_", " ")}`}
+                </small> : m.send_id === userID && <small>
+                  {m.delivery === "queued" ? "Saved · queued for push" :
+                    m.delivery === "not_queued" ? "Saved · push not queued" :
+                      m.delivery === "unknown" ? "Saved · push uncertain" : "Saved"}
+                </small>}
+                {m.status === "uncertain" && m.retryable && <button type="button" className="retry-message"
+                  onClick={() => retry(m.client_message_id)} disabled={!connected}>Retry same request</button>}
               </div>
             ))
           ) : (
@@ -354,13 +387,13 @@ function Chat({ token, onLogout }) {
               placeholder="Write a message…"
               autoComplete="off"
             />
-            <button className="send" aria-label="Send">
+            <button className="send" aria-label="Send" disabled={!connected || authRequired}>
               <Send size={18} />
             </button>
           </form>
         )}
         {error && (
-          <div className="toast">
+          <div className="toast" role="alert">
             {error}
             <button onClick={() => setError("")}>×</button>
           </div>
@@ -374,6 +407,7 @@ function App() {
   const [token, setToken] = useState(localStorage.getItem("token") || "");
   return token ? (
     <Chat
+      key={token}
       token={token}
       onLogout={() => {
         localStorage.removeItem("token");
