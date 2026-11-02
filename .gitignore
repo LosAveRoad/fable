@@ -21,3 +21,8 @@ bin/
 
 # 前端依赖
 **/node_modules/
+
+# Isolated three-role development runtime and generated client
+.fable/
+web/chat-server/dist/
+**/__pycache__/

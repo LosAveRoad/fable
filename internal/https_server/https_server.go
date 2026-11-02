@@ -13,11 +13,10 @@ func NewEngine(jwtKey []byte) *gin.Engine {
 	return r
 }
 
-// NewLogicEngine retains the legacy business routes and static client, while
-// Comet owns WebSocket upgrades. Sync is mounted only by this Logic constructor.
+// NewLogicEngine retains business routes while Comet owns WebSocket upgrades.
+// The local ingress serves the v2 client; old assets stay at the legacy entry.
 func NewLogicEngine(jwtKey []byte, sync gin.HandlerFunc) *gin.Engine {
 	r := gin.Default()
-	r.Static("/chat", "./web/chat-server")
 	mount(r, jwtKey, LogicRoutes(sync))
 	return r
 }

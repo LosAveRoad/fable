@@ -6,7 +6,7 @@
 
 - 使用满足 [go.mod](../go.mod) 的 Go 工具链，从仓库根目录执行命令。
 - 普通单元测试使用 mock/miniredis 等测试替身，不要求外部 MySQL、Redis 或 Kafka。
-- 旧单体的 `internal/integration` 测试要求 MySQL 和 Redis；新 Logic 的后端和 Comet 联调见下方独立服务验证。
+- 旧单体回归使用 MySQL 和 Redis；三角色后端测试与完整拓扑验收另外使用 Kafka，见下方分开的入口。
 - race detector 需要平台支持的 C 工具链；Windows 可使用 64 位 MSYS2 UCRT64 GCC。
 
 集成测试会清理所选数据库中的业务表，并扫描删除所选 Redis DB 中的 `fable:v1:*`。必须使用专用测试数据库和独立 Redis 实例；当前测试没有提供 Redis DB 编号覆盖。
@@ -56,9 +56,11 @@ powershell -ExecutionPolicy Bypass -File .\scripts\test.ps1
 
 ## CI 与结果边界
 
-[CI](../.github/workflows/ci.yml) 配置 MySQL 8.4、Redis 7.4、Kafka 3.9 和 Go 工具链，执行格式与 HTTP 生成物检查、全量单测、旧单体集成回归、Comet/Job race 测试及新 Logic 真实后端 race 测试。它不代表完整三角色公开 WebSocket 链路或 K8s 故障验收；容量测试另见[压测说明](../tests/load/README.md)，需保存实际运行证据。
+[CI](../.github/workflows/ci.yml) 使用 MySQL 8.4、Redis 7.4、Kafka 3.9，执行格式与 HTTP 生成物检查、全量 Go 单测与 vet、Comet/Job race、旧单体业务回归、真实后端 race、前端状态测试与生产构建、本地入口和生命周期测试，以及下面的完整三角色验收。另起一套托管 Compose 验证 dev-up、status、选定环境 smoke、重复 up 和退出。
 
-## Logic 独立服务验证
+CI 失败只保存角色日志，不上传含凭据的 private.json 或生成配置。测试证明本地多进程的正确性，不代表 Kubernetes、跨主机安全、基础设施容灾或容量验收；压测另见[压测说明](../tests/load/README.md)，需保存实际运行证据。
+
+## 三角色后端验证
 
 新 Logic 使用独立新空库，示例配置 `config/logic.example.toml`；显式创建数据库后运行 `go run ./cmd/logic -config config/logic.example.toml init-schema`，正常运行使用 `serve`。初始化拒绝已有表，服务启动只检查结构。JWT、Job/Kick Token、逐 Comet 的 instance/boot/address/token 授权由环境提供，不把示例占位符用于真实服务。Kafka `fable.push.v1` 须由运维脚本/管理命令显式创建（首期 6 分区），Producer 不自动建 Topic。
 
@@ -75,10 +77,43 @@ node --test .github/scripts/check-docs.test.cjs
 ```sh
 # 先配置 FABLE_LOGIC_TEST_MYSQL_DSN（parseTime=true/UTC）、
 # FABLE_LOGIC_TEST_REDIS_ADDR、FABLE_LOGIC_TEST_KAFKA_BROKER。
-go test -p 1 -race -tags='integration mysql' ./internal/logic/... -count=1
+go test -p 1 -race -tags='integration mysql' -count=1 -timeout=180s ./internal/logic/... ./internal/job/... ./internal/localdev
 go test -p 1 -race ./internal/comet ./internal/mcpserver/... ./internal/httpdocs ./internal/https_server
 ```
 
 Logic 集成测试使用实际 MySQL、Redis、TCP Logic 和两个真实 Comet RPC/实例客户端，验证业务持久化、并发重复/冲突、群成员与 AI 白名单撤权、连接替换/Kick/旧 Disconnect、HTTP/MCP 和权威同步。编排级推送失败使用仅替换 Broker 边界的捕获 Publisher，真实 Kafka adapter 测试另验证 RequireAll/会话分区 Key/字节载荷/禁止自动建 Topic；不把捕获器视为实际 Kafka 全链路。
 
 旧单体回归测试现支持 TEST_MYSQL_PORT / TEST_REDIS_PORT；显式空 TEST_MYSQL_PASSWORD 可用于隔离本机无密码测试实例。旧回归入口会清空所选业务表，仅允许指向测试库。CI 保留该回归并追加新 Logic 的真实后端 race 测试。
+
+## 完整本地拓扑验收
+
+开发启动与运维命令见[本地部署](../deploy/local/README.md)。以下两种 smoke 各有用途：
+
+| 入口 | 验证对象 | 数据范围 |
+| --- | --- | --- |
+| `python3 scripts/local/manage.py smoke` | 当前运行目录选定的入口、两向消息及持久化 | 临时随机 UUID 用户/会话，精确清理；不初始化表、不改 Topic |
+| `./scripts/smoke.sh -timeout=240s` | 新建两份每角色的完整隔离进程，测试后退出 | 新建 `fable_e2e_*` 库、独立 Redis 命名空间和带隔离后缀的 Kafka Topic/Group |
+
+完整验收需要显式提供以下环境；MySQL DSN 不选择业务库，账号须能创建/删除测试前缀库。示例端口与密码需改成自己的隔离测试依赖。
+
+```sh
+export FABLE_LOGIC_TEST_MYSQL_DSN='root:test-password@tcp(127.0.0.1:3306)/?charset=utf8mb4&parseTime=true&loc=UTC'
+export FABLE_LOGIC_TEST_REDIS_ADDR=127.0.0.1:6379
+export FABLE_LOGIC_TEST_KAFKA_BROKER=127.0.0.1:9092
+./scripts/smoke.sh -timeout=240s
+```
+
+[拓扑测试](../internal/e2e/topology_test.go) 启动真实角色命令，通过入口使用公开 HTTP、WebSocket v2 与 MCP，验证 100 条双向消息、群聊、相同 client_message_id 重试的一次持久化、AI 来源、Job 全部停止后排队与重启投递、换 Comet 后踢旧连接、离线同步、无效原始字节进入 DLQ、无效重放不发布，以及路由丢失后的租约关闭与整轮重启。测试清理自己创建的数据库、路由命名空间及隔离 Kafka Topic，不重置其他消费组。可设 `FABLE_E2E_ARTIFACT_DIR` 在失败时复制角色日志，禁止收集配置或私有清单。
+
+本地脚本和浏览器状态的快速检查不需要外部依赖：
+
+```sh
+python3 -m unittest discover -s scripts/local -p 'test_*.py'
+node --test deploy/local/proxy.test.mjs
+cd web/chat-server
+npm ci --no-audit --no-fund
+npm test
+npm run build
+```
+
+前端自动测试覆盖稳定重试 ID、超过 JavaScript 安全整数范围的位置、分页与实时消息合并、账户/会话切换、断线重连及 AI 来源。实际浏览器验收还应检查注册登录、双向聊天、群聊、同步去重和账户切换；自动状态测试不能替代界面检查。

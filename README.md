@@ -1,62 +1,56 @@
 # Fable Chat
 
-Fable 是参考 KamaChat 业务组织方式的 Go 聊天学习项目，包含用户与会话、文本单聊、部分群聊功能，以及供外部 AI 客户端调用的 MCP Server。
+Fable 是参考 goim 职责划分的 Go 聊天学习项目。Logic 处理 HTTP/MCP、业务与持久化；Comet 持有 WebSocket；Job 消费 Kafka 并定向投递。保留用户、联系人、会话、单聊、群聊和用户授权的 AI 代发规则。
 
-**旧单体状态：** 单实例聊天与 MCP 链路已有实现和测试；Redis 用于缓存。旧 Kafka 模式、Docker Compose 和 K8s 双副本清单缺少跨实例消息路由与重放幂等，不能用于验收新三角色拓扑。
+**当前能力：** 三个角色有独立入口；本地脚本启动两个 Logic、两个 Comet、两个 Job 和统一浏览器入口。v2 前端支持稳定发送 ID、消息合并、重连与分页同步修复。真实 MySQL/Redis/Kafka 验证了跨实例收发、幂等、MCP、连接迁移、Job 重启与 DLQ。可靠性是“持久消息 + 尽力在线推送 + 同步修复”，没有 Outbox 或端到端已读保证。
 
-三角色迁移已交付独立的 [Comet 投递内核](internal/comet)，包含本地连接、WebSocket 写出、RPC 适配和 Logic 实例租约客户端；本轮已与真实 Logic 联调，公开 WebSocket 接入和 Comet 进程入口仍待实现。
+## 本地启动
 
-独立 [Logic 服务](cmd/logic) 已实现现有 HTTP/MCP、九个授权 RPC、事务消息持久化/幂等、Redis 路由、Kafka 生产和权威同步；使用独立新空库与 [Logic 配置](config/logic.example.toml)。原单体作为隔离回归入口保留。Comet 的公开用户接入和 Job 消费运行链路仍待接通，不代表新三角色聊天已可部署。HTTP code-first 文档与 PR 文档影响检查已接入。
+准备满足 [go.mod](go.mod) 的 Go、Python 3、Node.js 22.12+ 和 Docker Compose。容器仅监听回环；首次启动会下载依赖镜像并构建服务/前端。
 
-[Job 单任务投递内核](internal/job) 已实现任务校验、Logic 路由解析、Comet 定向 RPC 和有界重试；Kafka 消费、offset 提交、DLQ 写入与独立进程尚未接入。
+```sh
+./scripts/dev-up.sh
+./scripts/dev-status.sh
+```
 
-## 文档入口
+打开 `http://127.0.0.1:18080`，注册两个测试账户并创建会话。`dev-up` 只为本地开发前缀的数据库准备结构，已有表不自动迁移；服务凭据与运行状态保存在忽略的私有目录。详细的依赖复用、端口、日志、启停和死信操作见 [本地部署](deploy/local/README.md)。
 
-| 任务 | 入口 |
+```sh
+./scripts/dev-down.sh          # 停止本轮应用进程，保留基础设施和数据
+./scripts/dev-down.sh --infra  # 同时停止本轮 Compose 服务，保留数据卷
+```
+
+也可分别运行 `cmd/logic`、`cmd/comet`、`cmd/job`；配置与服务凭据必须匹配，不把示例占位符用于真实环境。Kubernetes、跨主机 TLS、基础设施高可用与远程发布不在本阶段范围；旧 K8s/CD 材料不能用于运行新拓扑。
+
+## 文档与验证
+
+| 任务 | 权威入口 |
 | --- | --- |
-| 理解系统、数据流、设计取舍与已知缺口 | [总架构](docs/architecture.md) |
-| 理解已接受的 goim 三角色设计、角色接口与交付依赖 | [迁移设计（已接受，实施进行中）](docs/design/goim-migration.md) |
-| 写模块前核对职责与协作 | [Logic](docs/contracts/logic.md)、[Comet](docs/contracts/comet.md)、[Job](docs/contracts/job.md) 角色契约（长期保留） |
-| 查看 RPC/DTO spec 与 HTTP code-first 维护规则 | [接口契约与文档维护](api/proto/README.md) |
-| 准备测试依赖并运行测试 | [测试环境](docs/test-environment.md) |
-| 理解部署样例、初始化前提与发布方式 | [部署说明](deploy/k8s/README.md) |
-| 配置部署密钥 | [密钥说明](deploy/secrets/README.md) |
-| 使用压测脚本并记录结果 | [压测说明](tests/load/README.md) |
-
-接口字段、环境变量和 MCP Schema 以总架构链接的源码与测试为准，避免在多份文档中重复维护。旧 MVP 规划、个人设计、面试笔记和未填写的报告已从当前文档集中移除；需要研究演进过程时，可阅读[清理前的文档快照](https://github.com/LosAveRoad/fable/tree/2d85cdbf1f229deb4fa17518ff7a1c419a08a893/docs)。该快照不作为当前契约。
-
-## 本地启动旧单体后端
-
-从仓库根目录执行。准备满足 [go.mod](go.mod) 的 Go 工具链，以及可连接、已创建开发数据库的 MySQL。
+| 理解当前运行架构与失败边界 | [总架构](docs/architecture.md) |
+| 查阅已接受的决策与迁移约束 | [设计基线](docs/design/goim-migration.md) |
+| 写模块前核对职责与协作 | [Logic](docs/contracts/logic.md)、[Comet](docs/contracts/comet.md)、[Job](docs/contracts/job.md) |
+| 查看接口与维护规则 | [.proto / DTO spec](api/proto/README.md)、[HTTP code-first](api/openapi/README.md) |
+| 启停、配置、探针与重放 | [本地部署](deploy/local/README.md) |
+| 准备隔离依赖、执行测试 | [测试环境](docs/test-environment.md) |
+| 查阅交付进度和实际证据 | [Issue #7](https://github.com/LosAveRoad/fable/issues/7) |
 
 ```sh
-cp config/config.example.toml config/config.toml
+go test -p 1 ./...
+go vet -p 1 ./...
+go test -p 1 -race ./internal/comet/... ./internal/job/...
+sh scripts/check-httpdocs.sh
+npm --prefix web/chat-server test
+npm --prefix web/chat-server run build
 ```
 
-编辑本地配置中的 MySQL 用户名、密码和数据库名，并替换 JWT 示例密钥。配置加载顺序为 TOML 后叠加环境变量；完整覆盖项见 [config.go](internal/config/config.go)。本地配置已被 Git 忽略。
+真实后端与多进程冒烟需要专用测试依赖，具体环境变量见测试环境。不能以 mock 通过、Kafka ACK 或 healthz 代替完整链路验收。
 
-首次运行可关闭 Redis 和 Kafka，先验证单实例链路：
+## 学习与旧环境
 
-```sh
-export FABLE_REDIS_ENABLED=false
-export FABLE_KAFKA_ENABLED=false
-go run ./cmd/my_chat_server
-```
+架构和业务决策由项目作者审核；AI 可辅助实现、测试、解释和审查，合并前应能够说明数据流、失败语义及代码取舍。参考实现的能力不自动成为本项目的能力，性能数据只能来自实际测量。
 
-PowerShell 中用 `$env:FABLE_REDIS_ENABLED = 'false'` 和 `$env:FABLE_KAFKA_ENABLED = 'false'` 设置相同开关。进程启动时会连接 MySQL 并通过 GORM AutoMigrate 建表。
-
-```sh
-curl --fail http://localhost:8080/healthz
-```
-
-返回 `ok` 只说明 HTTP 入口可响应，不能证明消息消费、持久化或投递正常。主要入口为 HTTP API、`/wss` 和 `/mcp`，具体边界见总架构。
-
-## 前端与学习约定
-
-浏览器前端位于 [web/chat-server](web/chat-server)，使用 React/Vite，构建方式见其 [package.json](web/chat-server/package.json)。现有前端工作流单独发布静态资源；后端 Docker 镜像没有打包前端。
-
-核心业务代码由项目作者手写，不由 AI 直接生成。AI 可用于解释、审查和文档整理；单个函数的补全必须能逐行解释并自行修改。参考 KamaChat 的业务边界和组织方式时，应记录差异与取舍，不把参考实现的能力当作 Fable 已完成的能力。
+旧 `cmd/my_chat_server` 及旧前端构建/部署样例保留为隔离回归参照，不与新拓扑共用消息数据库、路由前缀或旧 Kafka 命令 Topic。旧规划和分析可查[历史文档快照](https://github.com/LosAveRoad/fable/tree/2d85cdbf1f229deb4fa17518ff7a1c419a08a893/docs)，不作为当前契约。
 
 ## License
 
-Fable 的自有代码采用 [MIT License](LICENSE)。
+Fable 自有代码采用 [MIT License](LICENSE)。

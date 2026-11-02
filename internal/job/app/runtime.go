@@ -26,25 +26,48 @@ type runtimeState struct {
 	alive, joined atomic.Bool
 	mu            sync.Mutex
 	partitions    map[int]partitionProgress
+	generation    int32
+	rpc           rpcMetrics
 }
 
-func (s *runtimeState) setLag(partition int, lag int64) {
+// Assignment, updates and release share a generation fence: a canceled
+// sampler or deferred cleanup can never resurrect/erase current ownership.
+func (s *runtimeState) assign(generation int32, partitions []int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.partitions == nil {
-		s.partitions = map[int]partitionProgress{}
+	s.generation = generation
+	s.partitions = make(map[int]partitionProgress, len(partitions))
+	for _, id := range partitions {
+		s.partitions[id] = partitionProgress{}
 	}
-	p := s.partitions[partition]
+	s.joined.Store(true)
+}
+func (s *runtimeState) release(generation int32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.generation != generation {
+		return
+	}
+	s.partitions = nil
+	s.joined.Store(false)
+}
+func (s *runtimeState) setLag(generation int32, partition int, lag int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, owned := s.partitions[partition]
+	if !owned || s.generation != generation {
+		return
+	}
 	p.Lag = lag
 	s.partitions[partition] = p
 }
-func (s *runtimeState) progress(partition int, offset int64, commit bool) {
+func (s *runtimeState) progress(generation int32, partition int, offset int64, commit bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.partitions == nil {
-		s.partitions = map[int]partitionProgress{}
+	p, owned := s.partitions[partition]
+	if !owned || s.generation != generation {
+		return
 	}
-	p := s.partitions[partition]
 	p.Offset = offset
 	if commit {
 		p.CommittedAt = time.Now().Unix()
@@ -96,6 +119,7 @@ func probeHandler(s *runtimeState, c *job.Consumer, dependencies func(context.Co
 			_, _ = fmt.Fprintf(w, "fable_job_%s_total %d\n", v.name, v.n)
 		}
 		_, _ = fmt.Fprintf(w, "fable_job_recent_identities %d\nfable_job_alive %d\nfable_job_joined %d\n", v.RecentIdentities, boolInt(s.alive.Load()), boolInt(s.joined.Load()))
+		s.rpc.writeMetrics(w)
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		ids := make([]int, 0, len(s.partitions))
@@ -128,7 +152,9 @@ func Run(ctx context.Context, c Config) error {
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	state := &runtimeState{}
 	pool := newRPCPool(64)
+	pool.metrics = &state.rpc
 	defer pool.Close()
 	logic, err := pool.get(ctx, c.LogicAddress)
 	if err != nil {
@@ -141,7 +167,6 @@ func Run(ctx context.Context, c Config) error {
 	sink := newSink(c, c.DLQTopic)
 	defer sink.Close()
 	consumer := job.NewConsumer(processor, sink, job.ConsumerOptions{Observe: correlationObserver(os.Stderr)})
-	state := &runtimeState{}
 	state.alive.Store(true)
 	defer state.alive.Store(false)
 	listener, err := net.Listen("tcp", c.HTTPAddress)

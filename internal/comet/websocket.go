@@ -92,6 +92,7 @@ func (c *Connection) WriteTo(ctx context.Context, socket *websocket.Conn, protoc
 				err = socket.WriteJSON(control.frame)
 			}
 			if err != nil {
+				c.observeWriteFailure(err)
 				return err
 			}
 			if control.closeAfter {
@@ -116,6 +117,7 @@ func (c *Connection) WriteTo(ctx context.Context, socket *websocket.Conn, protoc
 				frame = legacyMessage(message)
 			}
 			if err := socket.WriteJSON(frame); err != nil {
+				c.observeWriteFailure(err)
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
