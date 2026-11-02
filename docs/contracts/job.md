@@ -1,6 +1,6 @@
 # Job 与 Kafka 推送契约
 
-状态：架构已接受；单任务投递内核已实现，Kafka 消费运行链路尚未接入。Owner 为仓库维护者，生产/消费任务的 PR 作者共同维护本文。Logic 是 Producer；Job 是 Consumer；Comet 不连接 Kafka。精确 JSON 结构以 [PushTask DTO](../../internal/dto/im/push.go) 与 [spec](../../api/proto/README.md) 为准。
+状态：独立 Job、Kafka 消费与提交、DLQ、受限人工重放和探针已实现，并已通过真实后端的三角色联调。Owner 为仓库维护者，生产/消费任务的 PR 作者共同维护本文。Logic 是 Producer；Job 是 Consumer；Comet 不连接 Kafka。精确 JSON 结构以 [PushTask DTO](../../internal/dto/im/push.go) 与 [spec](../../api/proto/README.md) 为准。
 
 本文长期保留，作为写 Job 代码前的消费、投递与恢复参考。任务字段以 DTO、RPC 方法与局部语义以 `.proto`/注释为准；消费流程、提交边界和重试行为变化时同步本文，不为纯字段变化复制另一份清单。
 
@@ -14,7 +14,9 @@
 
 `Result` 保留完整任务及本次处理范围内的有序逐用户结果，`PendingRecipients()` 给出未终结子集；`Attempts` 计入查询/解析失败的任务轮次。存在 pending 时返回 `ErrUnresolved`，取消/截止同时保留 context 错误和已知进展。nil error 只说明全部本次目标已终结，不等于客户端收到，也不执行 offset 提交。
 
-当前未实现 Kafka Fetch/Commit、DLQ 写入/重放命令、跨任务冲突检测/报警、管理端点或独立 Job 进程；不接入旧命令 Topic、不访问数据库。RPC 客户端的连接池、关闭和传输安全由调用方负责；选择器必须遵守 context，不从任务接收地址。Job 内核测试使用真实 gRPC 与两个真实 Comet 内核，并以测试服务器隔离 Logic 依赖；真实 Logic 服务已在独立入口实现，但尚未通过 Job 消费入口接通完整聊天链路。
+入口为 [cmd/job](../../cmd/job)，配置见 [job.example.toml](../../config/job.example.toml)。运行时使用 ConsumerGroup generation 分配分区，每分区单个未确认处理周期；DLQ RequireAll 成功后才提交原 offset，任一确认边界失败会停止当前监督周期并取消同进程其他分区，未确认任务交给新 generation 重放。RPC 池最多缓存 64 个地址，地址只来自 Logic 并限本地回环；不接入旧命令 Topic、不访问数据库。
+
+近期 task_id/业务指纹冲突窗口默认 4096 条、最多 65536 条，记录冲突指标并将冲突任务隔离；它不是跨进程、跨重启的持久全局冲突数据库。`/healthz`、`/readyz`、`/metrics` 区分进程、有效 group membership、阻塞确认和依赖状态；空闲队列保持存活，lag 每秒以最多 500 ms 的读取预算取当前 Broker 水位。结构化日志关联 request_id、message_id、task_id 与 Topic/partition/十进制 offset，不记录正文、收件人、令牌或上游错误原文。
 
 ## 角色接口
 
@@ -69,10 +71,10 @@ DLQ 与重放保留原 message 和完整 recipients，不修改 task_id 的业�
 
 有效任务的死信包含 task_id、原 Topic/partition/offset、失败原因、未解决目标、首次/最后尝试时间及完整原任务。解码失败、未知 Schema 或语义验证失败都保存原始字节 base64，不把未知字段丢弃后塞进当前 DTO，也不为非法收件人伪造 pending 子集；这类记录不可直接自动重放。日志只保留摘要，DLQ 自身包含业务正文，按敏感数据管理。
 
-`replay-dlq.sh` 显式选择 run_id、时间或 offset 范围，先预览数量，修复原因后再执行；只重发原推送语义，不调用 Logic SubmitMessage，不制造新的业务消息 ID。重放事件记录 replay_run_id 和来源，不自动删除原记录或重置整个 Consumer Group。重复重放可重复推送，客户端按 message_id 合并；旧 Socket 兼容期可能显示重复，不能把旧协议称为幂等交付。
+`job -config FILE replay-dlq` 显式选择 run_id、单分区和闭区间 offset，默认只预览；最多 10000 个 offset、16 MiB 记录，完整有序范围读取/校验后才允许 `-execute` 发布。保留期推进、缺口或截断会失败，不默默重放部分选择。只有有效任务的 pending 子集可重放；未知/损坏原始字节保留供修复，不能自动转换成新任务。只重发原推送语义，不调用 Logic SubmitMessage，不制造新消息 ID。重放附 run_id 与来源，不删除原死信或重置 Group；客户端仍须按 message_id 合并。
 
 ## 故障与可观测性
 
 消费循环停止必须导致 not ready，并退出或被明确监督重启；不能复用当前只打一行日志的行为。监测 lag、每分区最后处理/提交时间、重试、offline、DLQ、commit 错误和各 Comet RPC 结果。没有消息时不能仅凭“很久没消费”判故障，需要区分空队列与循环死亡。
 
-Producer 和 Consumer 可分别评审，不固定 PR 数量或编号；接入实际使用前必须通过真实 Kafka 的联调：任意 Job 接到任务仍能投到目标 Comet；Job 数量变化不影响连接；重放不写 MySQL；部分成功不误提交；坏消息/DLQ 故障可见。端到端已读与强保证在线交付不在此契约内。
+Producer 和 Consumer 可分别评审，不固定 PR 数量或编号。真实 Kafka 测试覆盖消费者重启/rebalance、坏消息原始字节、pending 重放、DLQ 故障不越过 offset、提交/取消门禁与空闲 lag；真实两 Logic、两 Comet、两 Job 验收覆盖跨实例收发、Job 停止期间排队及恢复不重复落库。端到端已读与强保证在线交付不在此契约内。
