@@ -14,6 +14,9 @@ import (
 // into false or return a misleading database failure to the sender.
 func (s *Service) dispatch(ctx context.Context, clientID string, saved messagestore.Saved, requestID string) *pb.SendResult {
 	result := &pb.SendResult{ClientMessageId: clientID, Stored: true, Message: saved.Message, Replayed: saved.Replayed, Dispatch: pb.DispatchState_DISPATCH_STATE_QUEUED}
+	defer func() {
+		s.observeDispatch(ctx, requestID, saved.Message.GetMessageId(), result.Dispatch)
+	}()
 	count := (len(saved.Recipients) + 99) / 100
 	published := 0
 	for index := 0; index < count; index++ {
@@ -38,7 +41,9 @@ func (s *Service) dispatch(ctx context.Context, clientID string, saved messagest
 			}
 			return result
 		}
-		if e = s.publisher.Publish(ctx, saved.Message.ConversationId, raw); e != nil {
+		e = s.publisher.Publish(ctx, saved.Message.ConversationId, raw)
+		s.observePublish(ctx, requestID, saved.Message.GetMessageId(), task.TaskID, e)
+		if e != nil {
 			result.Dispatch = pb.DispatchState_DISPATCH_STATE_UNKNOWN
 			if published == 0 && errors.Is(e, ErrNotPublished) {
 				result.Dispatch = pb.DispatchState_DISPATCH_STATE_NOT_QUEUED

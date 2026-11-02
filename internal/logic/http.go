@@ -40,7 +40,11 @@ func NewHandler(s *Service, db *gorm.DB, probe func(context.Context) DependencyS
 			c.JSON(400, gin.H{"error": "invalid sync query"})
 			return
 		}
+		started := time.Now()
 		page, e := s.messages.Sync(c.Request.Context(), c.GetString("user_uuid"), c.Query("conversation_id"), c.Query("cursor"), limit)
+		if s.observation != nil {
+			s.observation.db[dbSync].observe(time.Since(started))
+		}
 		if e != nil {
 			code := http.StatusServiceUnavailable
 			message := "message storage unavailable"
@@ -57,7 +61,7 @@ func NewHandler(s *Service, db *gorm.DB, probe func(context.Context) DependencyS
 		c.JSON(200, page)
 	})
 	root := http.NewServeMux()
-	root.Handle("/mcp", mcpserver.NewHTTPHandler(mcpserver.NewWithSend(func(ctx context.Context, user string, input contract.SendMessageInput) (contract.SendMessageOutput, error) {
+	root.Handle("/mcp", mcpserver.NewStatelessHTTPHandler(mcpserver.NewWithSend(func(ctx context.Context, user string, input contract.SendMessageInput) (contract.SendMessageOutput, error) {
 		// Resolve presentation data before saving, so a later lookup failure never
 		// hides a known commit behind an ordinary tool error.
 		if db == nil {
@@ -85,6 +89,7 @@ func NewHandler(s *Service, db *gorm.DB, probe func(context.Context) DependencyS
 		view := publicMessage(m)
 		return contract.SendMessageOutput{Message: contract.Message{MessageUUID: m.MessageId, SessionUUID: m.SessionId, Sender: contract.UserSummary{UUID: m.SenderId, Name: sender.Nickname}, Type: 0, Content: m.Content, Origin: 1, CreatedAt: m.CreatedAt.AsTime().UTC().Format(time.RFC3339Nano)}, Result: &im.SendResult{ClientMessageID: result.ClientMessageId, Stored: result.Stored, Message: view, Dispatch: dispatchState(result.Dispatch), Replayed: result.Replayed}}, nil
 	}), s.jwtKey))
+	root.HandleFunc("/metrics", s.metrics)
 	root.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200); _, _ = w.Write([]byte("ok")) })
 	root.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
