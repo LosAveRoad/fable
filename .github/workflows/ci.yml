@@ -78,6 +78,18 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Install pinned protoc
+        shell: bash
+        run: |
+          protoc_dir="$RUNNER_TEMP/protoc-33.4"
+          mkdir -p "$protoc_dir"
+          curl --fail --show-error --silent --location --retry 3 \
+            https://github.com/protocolbuffers/protobuf/releases/download/v33.4/protoc-33.4-linux-x86_64.zip \
+            --output "$protoc_dir/protoc.zip"
+          echo "c0040ea9aef08fdeb2c74ca609b18d5fdbfc44ea0042fcfbfb38860d35f7dd66  $protoc_dir/protoc.zip" | sha256sum --check --strict
+          unzip -q "$protoc_dir/protoc.zip" -d "$protoc_dir"
+          echo "$protoc_dir/bin" >> "$GITHUB_PATH"
+
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
@@ -91,12 +103,15 @@ jobs:
       - name: Check formatting
         shell: bash
         run: |
-          files=$(git ls-files "internal/integration/*.go" "internal/service/chatservice/*.go" "internal/comet/*.go" "internal/comet/**/*.go" "internal/job/*.go" "internal/job/**/*.go" "internal/logic/*.go" "internal/logic/**/*.go" "internal/localdev/*.go" "internal/e2e/*.go" "internal/httpdocs/*.go" "internal/https_server/*.go" "internal/mcpserver/*.go" "internal/mcpserver/**/*.go" "cmd/**/*.go" "api/gen/**/*.go" | xargs gofmt -l)
+          files=$(git ls-files "internal/integration/*.go" "internal/service/chatservice/*.go" "internal/comet/*.go" "internal/comet/**/*.go" "internal/job/*.go" "internal/job/**/*.go" "internal/logic/*.go" "internal/logic/**/*.go" "internal/localdev/*.go" "internal/e2e/*.go" "internal/blackbox/*.go" "internal/httpdocs/*.go" "internal/https_server/*.go" "internal/mcpserver/*.go" "internal/mcpserver/**/*.go" "cmd/**/*.go" "api/gen/**/*.go" | xargs gofmt -l)
           if [ -n "$files" ]; then
             echo "These files are not formatted:"
             echo "$files"
             exit 1
           fi
+
+      - name: Check pinned Protobuf generated bindings
+        run: sh scripts/generate-proto.sh --check
 
       - name: Check HTTP generated contract
         run: sh scripts/check-httpdocs.sh
@@ -144,19 +159,38 @@ jobs:
           python3 scripts/local/manage.py smoke
           ./scripts/dev-up.sh --skip-web
 
+      - name: Verify public black-box flows
+        run: |
+          go run ./cmd/blackbox -base-url http://127.0.0.1:20080 \
+            -run-id "$(python3 -c 'import uuid; print(uuid.uuid4())')" \
+            -report "$RUNNER_TEMP/fable-blackbox-report.json"
+
+      - name: Measure bounded public message load
+        run: |
+          go run ./cmd/bench -base-url http://127.0.0.1:20080 \
+            -run-id "$(python3 -c 'import uuid; print(uuid.uuid4())')" \
+            -report "$RUNNER_TEMP/fable-bench-report.json" \
+            -pairs 2 -rate 2 -duration 10s -receive-timeout 5s -min-receive-ratio 1
+
       - name: Stop managed local topology
         if: always()
         env:
           FABLE_LOCAL_RUNTIME_DIR: ${{ runner.temp }}/fable-managed
         run: ./scripts/dev-down.sh --infra
 
-      - name: Preserve role logs for diagnostics
-        if: failure()
+      - name: Preserve public reports and sanitized role diagnostics
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: fable-role-logs
+          name: fable-validation
           path: |
-            ${{ runner.temp }}/fable-managed/*.log
-            ${{ runner.temp }}/fable-e2e-logs/**/*.log
+            ${{ runner.temp }}/fable-blackbox-report.json
+            ${{ runner.temp }}/fable-bench-report.json
+            ${{ runner.temp }}/fable-managed/logic-*.log
+            ${{ runner.temp }}/fable-managed/comet-*.log
+            ${{ runner.temp }}/fable-managed/job-*.log
+            ${{ runner.temp }}/fable-e2e-logs/**/logic-*.log
+            ${{ runner.temp }}/fable-e2e-logs/**/comet-*.log
+            ${{ runner.temp }}/fable-e2e-logs/**/job-*.log
           if-no-files-found: ignore
           retention-days: 7

@@ -71,7 +71,7 @@ SendResult 包含 client_message_id、stored、完整 message、dispatch、repla
 | UNAVAILABLE / DEADLINE_EXCEEDED，结果不确定 | 可在有效连接上以同 client_message_id 重试；不得自动换 ID |
 | RESOURCE_EXHAUSTED | 有界退避；不无界堆积 |
 
-RPC 初始 deadline 提案：路由/续租 2 秒、发送 10 秒；Kafka publish 占用同一发送预算。超时可能发生在提交后，须按不确定结果处理。Connect 注册用独立 2 秒预算，丢失响应后关闭连接而非盲目重复替换。
+RPC 默认 deadline：路由/续租 2 秒、发送 10 秒；Kafka publish 占用同一发送预算。超时可能发生在提交后，须按不确定结果处理。Connect 注册用独立 2 秒预算，丢失响应后关闭连接而非盲目重复替换。
 
 ## 状态与持久化不变量
 

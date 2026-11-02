@@ -1,6 +1,6 @@
 # Fable 接口契约与文档维护
 
-状态：已接受三角色架构的接口细化，2026-10-28；Comet 投递端的实现进度见[角色契约](../../docs/contracts/comet.md)，其他未交付能力不因出现在 spec 中成为可用服务。架构与交付依赖见[总设计](../../docs/design/goim-migration.md)，各角色的职责见 [Logic](../../docs/contracts/logic.md)、[Comet](../../docs/contracts/comet.md)、[Job](../../docs/contracts/job.md)。
+状态：三角色 RPC 与 v2 DTO 已实现，2026-11-02；当前运行行为与验证边界见[总架构](../../docs/architecture.md)。[已接受设计](../../docs/design/goim-migration.md) 保留为决策基线，各角色的职责见 [Logic](../../docs/contracts/logic.md)、[Comet](../../docs/contracts/comet.md)、[Job](../../docs/contracts/job.md)。
 
 ## 权威来源与边界
 
@@ -35,7 +35,7 @@ HTTP 文档从实际路由注册、Handler、请求/响应 DTO、校验标签和
 
 **当前状态：** Logic 业务路由及接口元数据同源维护于 `internal/https_server/route_catalog.go`，`go run ./cmd/httpdocs` 使用仓库内固定的 Go 生成器从路由元数据及 DTO 反射生成 [OpenAPI 3.1 JSON](../openapi/http.json)。`sh scripts/check-httpdocs.sh` 重新生成、比较产物并执行真实路由覆盖及代表性状态/响应契约测试；CI 自动运行。HTTP 文档只包含已挂载的业务 REST 路由，不把 WS 帧或 MCP tools 当作 REST。健康探针由进程入口管理。
 
-PR 模板要求恰好选择一项文档影响；`PR documentation impact` Action 拒绝缺少选择、需要却没有文档/接口生成物变更，以及不需要却没有具体原因的 PR。它检查声明与文件，不能证明文档内容必然正确。仓库 Owner 可将该检查设为 required；当前工作不修改分支保护权限。`scripts/check-contracts.sh` 仍只检查 RPC spec/Go DTO 编译，不能替代 HTTP 校验。
+PR 模板要求恰好选择一项文档影响；`PR documentation impact` Action 拒绝缺少选择、需要却没有文档/接口生成物变更，以及不需要却没有具体原因的 PR。它检查声明与文件，不能证明文档内容必然正确。`main` 已要求 GitHub Actions 的 `test` 与 `docs-impact` 检查在最新基线上通过，并对管理员生效；禁止强推和删除，合并前须解决评审对话。`scripts/check-contracts.sh` 仍只检查 RPC spec/Go DTO 编译，不能替代 HTTP 校验。
 
 ## 公共值与存储结构
 
@@ -144,11 +144,11 @@ SyncQuery 来自 query 参数而非 JSON；limit=0/省略用 100，1–500 合�
 
 PushTask 不复制顶层 message_id/conversation_id/created_at，以 `message` 内字段为唯一来源；task_id=`push:v1:<message.message_id>:<chunk_index>`。schema_version=1、kind=message_push、chunk_count≥1、chunk_index<chunk_count；recipients 为持久快照排序去重后的稳定分片，1–100 个；targets 为这些用户的有效内部连接提示，可为空但编码 `[]`。
 
-同一 task_id 的业务 message、recipients 和分片信息不变；targets、request_id 与重放上下文可刷新。pending_recipients 省略表示完整分片，存在时必须非空、无重复、为 recipients 子集，并附非空 replay_run_id；Logic 常规生产者不得填写它。JSON 中显式 null/空数组不能用来伪装省略的 pending_recipients，未来消费者须在解码边界区分并拒绝这类输入。
+同一 task_id 的业务 message、recipients 和分片信息不变；targets、request_id 与重放上下文可刷新。pending_recipients 省略表示完整分片，存在时必须非空、无重复、为 recipients 子集，并附非空 replay_run_id；Logic 常规生产者不得填写它。JSON 中显式 null/空数组不能用来伪装省略的 pending_recipients，消费者在解码边界区分并拒绝这类输入。
 
 DLQRecord 的 task 与 raw_payload_base64 恰有一个：只有通过版本/结构/语义验证的有效任务在投递耗尽时，才保存完整 Task 加非空 pending_recipients。JSON 解码失败、未知 Schema、非法 ID/枚举/收件人及其他验证失败均保存原字节 base64，不转换为当前 PushTask，也不要求伪造 pending 子集；这类原始记录修复原因前不可直接自动重放。source_partition≥0，source_offset 为非负 int64 的十进制字符串；尝试时间有序。重放有效任务时保持原业务身份和完整 recipients，只改变 pending 子集与 replay_run_id。DTO 声明不自动验证这些跨字段规则。
 
-## 契约检查与后续实现
+## 契约检查与生成
 
 从仓库根目录运行，使用支持 proto3 的 protoc 和 go.mod 要求的 Go：
 
@@ -166,7 +166,7 @@ sh scripts/generate-proto.sh --check
 go test -race ./internal/comet
 ```
 
-生成脚本在临时目录安装固定插件；`--check` 只比较生成物，不改检出。脚本必须有对应 Go 模块的下载权限；生成绑定和通过测试不等于已有真实 Logic、租约或多实例部署。
+生成脚本在临时目录安装固定插件；`--check` 只比较生成物，不改检出。CI 的 required `test` job 从官方发布包安装 protoc 33.4，先验证固定 SHA-256，再解压并运行同一条 `--check`；`.proto` 与提交绑定漂移时失败。脚本必须有对应 Go 模块的下载权限；生成绑定与通过编译检查本身不证明运行时行为或部署结果。
 
 实现者以本 spec 的语义建立边界用例：缺少/未知枚举、超长正文、64 位 JSON 位置、过期 JWT/租约、旧 boot、重复批量输入、部分投递、同 ID 不同正文、权限撤销后的重试、无详情超时、空 pending 与越权重放目标、同步游标被实时消息跳过。PR 按实际能力拆分，不固定数量或编号。
 
